@@ -42,6 +42,8 @@ const ALL_BRACKET_TYPES = [
   "group_stage",
   "random",
 ];
+/** 현재 구현 완료되어 사용 가능한 대진 방식 (나머지는 준비 중으로 비활성화) */
+const BRACKET_TYPES_READY = ["partner_rotation", "group_stage"];
 /** 복식에서 코트/시간 설정 노출 대상 (토너먼트·예선 조편성 복식 포함) */
 const DOUBLES_COURT_TYPES = ["partner_rotation", "group_matching", "team_doubles", "tournament", "group_stage"];
 /** 시드 배정 노출 대상 */
@@ -126,6 +128,8 @@ function StepIndicator({ currentStep, totalSteps, className }) {
   );
 }
 
+const MATCH_TYPES_READY = ["doubles"];
+
 function MatchTypeSelector({ value, onChange }) {
   const icons = {
     singles: <User className="h-6 w-6" />,
@@ -135,17 +139,20 @@ function MatchTypeSelector({ value, onChange }) {
     <div className="space-y-4">
       <p className="text-sm font-semibold text-gray-900">경기 방식 선택</p>
       <div className="grid gap-4 sm:grid-cols-2">
-        {["singles", "doubles"].map((type) => {
+        {["doubles", "singles"].map((type) => {
           const isSelected = value === type;
+          const isReady = MATCH_TYPES_READY.includes(type);
           return (
             <button
               key={type}
               type="button"
               aria-pressed={isSelected}
-              aria-label={`${MATCH_TYPE_LABELS[type]} 선택`}
+              aria-disabled={!isReady}
+              aria-label={`${MATCH_TYPE_LABELS[type]}${!isReady ? " (준비 중)" : ""} 선택`}
               className={cn(
-                "w-full cursor-pointer rounded-xl border-2 p-4 text-left shadow-md transition-all hover:scale-[1.02] hover:shadow-lg sm:p-6",
+                "relative w-full rounded-xl border-2 p-4 text-left shadow-md transition-all sm:p-6",
                 "touch-manipulation",
+                isReady ? "cursor-pointer hover:scale-[1.02] hover:shadow-lg" : "cursor-not-allowed opacity-60",
                 isSelected
                   ? "border-primary bg-primary/15 ring-2 ring-primary ring-offset-2 shadow-sm"
                   : "border-gray-200 bg-white text-gray-900"
@@ -153,9 +160,14 @@ function MatchTypeSelector({ value, onChange }) {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onChange(type);
+                if (isReady) onChange(type);
               }}
             >
+              {!isReady && (
+                <span className="absolute right-3 top-3 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
+                  준비 중
+                </span>
+              )}
               <div className="flex flex-row items-center gap-3 pb-2">
                 <span
                   className={cn(
@@ -189,43 +201,62 @@ function BracketTypeSelector({ value, onChange, allowedTypes }) {
   };
   const types =
     allowedTypes && allowedTypes.length > 0 ? allowedTypes : ALL_BRACKET_TYPES;
+  const sortedTypes = [...types].sort((a, b) => {
+    const aReady = BRACKET_TYPES_READY.includes(a);
+    const bReady = BRACKET_TYPES_READY.includes(b);
+    if (aReady && !bReady) return -1;
+    if (!aReady && bReady) return 1;
+    return types.indexOf(a) - types.indexOf(b);
+  });
   const guide = modalType ? BRACKET_TYPE_GUIDE[modalType] : null;
 
   return (
     <div className="space-y-4">
       <label className="text-sm font-semibold text-gray-900">대진 방식 선택</label>
       <div className="grid gap-4 sm:grid-cols-2">
-        {types.map((type) => (
-          <Card
-            key={type}
-            role="button"
-            tabIndex={0}
-            aria-pressed={value === type}
-            aria-label={`${BRACKET_TYPE_LABELS[type]} 선택`}
-            className={cn(
-              "relative cursor-pointer transition-all hover:scale-[1.02] hover:shadow-card-hover",
-              value === type && "ring-2 ring-primary border-primary bg-primary/5"
-            )}
-            onClick={() => onChange(type)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onChange(type);
-              }
-            }}
-          >
-            <button
-              type="button"
-              aria-label={`${BRACKET_TYPE_LABELS[type]} 상세 안내`}
-              className="absolute right-3 top-3 z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary"
-              onClick={(e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                setModalType(type);
+        {sortedTypes.map((type) => {
+          const isReady = BRACKET_TYPES_READY.includes(type);
+          return (
+            <Card
+              key={type}
+              role="button"
+              tabIndex={isReady ? 0 : -1}
+              aria-pressed={value === type}
+              aria-disabled={!isReady}
+              aria-label={`${BRACKET_TYPE_LABELS[type]}${!isReady ? " (준비 중)" : ""} 선택`}
+              className={cn(
+                "relative transition-all",
+                isReady
+                  ? "cursor-pointer hover:scale-[1.02] hover:shadow-card-hover"
+                  : "cursor-not-allowed opacity-60",
+                value === type && "ring-2 ring-primary border-primary bg-primary/5"
+              )}
+              onClick={() => isReady && onChange(type)}
+              onKeyDown={(e) => {
+                if (!isReady) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onChange(type);
+                }
               }}
             >
-              <Info className="h-4 w-4" />
-            </button>
+              {!isReady && (
+                <span className="absolute right-12 top-3 z-10 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
+                  준비 중
+                </span>
+              )}
+              <button
+                type="button"
+                aria-label={`${BRACKET_TYPE_LABELS[type]} 상세 안내`}
+                className="absolute right-3 top-3 z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setModalType(type);
+                }}
+              >
+                <Info className="h-4 w-4" />
+              </button>
             <CardHeader className="flex flex-row items-start gap-3 pb-2 pr-10">
               <span
                 className={cn(
@@ -246,7 +277,8 @@ function BracketTypeSelector({ value, onChange, allowedTypes }) {
               </div>
             </CardHeader>
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       {guide && (
