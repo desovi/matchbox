@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Bright & Clean palette */
+    --background: 0 0% 100%;
+    --background-muted: 220 14% 96%;
+    --foreground: 220 13% 18%;
+    --primary: 160 84% 39%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 217 91% 60%;
+    --secondary-foreground: 0 0% 100%;
+    --accent: 48 96% 53%;
+    --accent-foreground: 220 13% 18%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 13% 18%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 160 84% 39%;
+    /* 남/여 구분용 (이름·토글) – 성 고정관념 피하는 중성 톤 */
+    --male: 174 60% 42%;
+    --male-foreground: 0 0% 100%;
+    --female: 38 92% 48%;
+    --female-foreground: 0 0% 100%;
+    --radius: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 13% 18%;
+  }
+
+  .dark {
+    --background: 220 13% 10%;
+    --foreground: 0 0% 98%;
+    --primary: 160 84% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 217 91% 60%;
+    --secondary-foreground: 0 0% 100%;
+    --accent: 48 96% 53%;
+    --accent-foreground: 220 13% 10%;
+    --success: 142 71% 45%;
+    --destructive: 0 84% 60%;
+    --muted: 220 13% 18%;
+    --muted-foreground: 220 9% 60%;
+    --card: 220 13% 14%;
+    --card-foreground: 0 0% 98%;
+    --border: 220 13% 22%;
+    --input: 220 13% 22%;
+    --ring: 160 84% 45%;
+    --popover: 220 13% 14%;
+    --popover-foreground: 0 0% 98%;
+    --male: 174 60% 52%;
+    --female: 38 92% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    font-size: 16px;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Pretendard", ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+/* Touch-friendly minimum tap target */
+@layer utilities {
+  .tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
