@@ -1,5 +1,5 @@
 /** Bracket types available for singles (1v1) */
-export const BRACKET_TYPES_SINGLES = ["tournament", "random"];
+export const BRACKET_TYPES_SINGLES = ["group_stage", "tournament", "random"];
 
 /** Bracket types available for doubles (2v2) */
 export const BRACKET_TYPES_DOUBLES = [

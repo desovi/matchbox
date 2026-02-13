@@ -162,13 +162,19 @@ export async function POST(request) {
     const participants = normalizeParticipants(rawParticipants);
     const isTeamEntryDoubles =
       (bracket_type === "tournament" || bracket_type === "group_stage") && match_type === "doubles";
-    const teams =
+    let teams =
       isTeamEntryDoubles && rawTeams?.length >= 2
         ? rawTeams.map((t) => ({
             player1: String(t.player1 ?? "").trim(),
             player2: String(t.player2 ?? "").trim(),
           }))
         : null;
+    if (bracket_type === "group_stage" && match_type === "singles" && participants.length >= 2) {
+      teams = participants.map((p) => ({
+        player1: String(p.name ?? "").trim(),
+        player2: "",
+      }));
+    }
     const supabase = await createClient();
     const courtCount = court_count ?? 1;
     const totalCourtHours = computeTotalCourtHours(

@@ -12,9 +12,6 @@ export default function HomePage() {
             href="/"
             className="flex items-center gap-2 font-bold text-gray-900"
           >
-            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-white text-lg leading-none">
-              🎾
-            </span>
             <span className="text-lg leading-tight">MatchBox</span>
           </Link>
           <p className="ml-auto hidden text-sm text-muted-foreground sm:block">

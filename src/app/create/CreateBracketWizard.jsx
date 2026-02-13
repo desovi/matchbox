@@ -2,6 +2,7 @@
 
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,7 @@ import {
   Save,
   RefreshCw,
   LayoutGrid,
+  Copy,
 } from "lucide-react";
 import { generateBracket } from "@/lib/bracket-logic";
 
@@ -95,7 +97,7 @@ const BRACKET_TYPE_EXAMPLES = {
   group_matching: "1A-1B vs 2A-2B | 3A-3B vs 4A-4B\n1A-2B vs 3A-4B (크로스 페어링)",
   team_doubles: "R1: 팀1 vs 팀2 | 팀3 vs 팀4\nR2: 팀1 vs 팀3 | 팀2 vs 팀5 (상대만 변경)",
   tournament: "8강 → 4강 → 결승\n단판 탈락, 4·8·16·32명",
-  group_stage: "조별 라운드 로빈만\n본선은 추첨 후 별도",
+  group_stage: "",
   random: "게임1: 랜덤 vs 랜덤\n게임2: 랜덤 vs 랜덤 (완전 랜덤)",
 };
 
@@ -128,7 +130,7 @@ function StepIndicator({ currentStep, totalSteps, className }) {
   );
 }
 
-const MATCH_TYPES_READY = ["doubles"];
+const MATCH_TYPES_READY = ["singles", "doubles"];
 
 function MatchTypeSelector({ value, onChange }) {
   const icons = {
@@ -139,7 +141,7 @@ function MatchTypeSelector({ value, onChange }) {
     <div className="space-y-4">
       <p className="text-sm font-semibold text-gray-900">경기 방식 선택</p>
       <div className="grid gap-4 sm:grid-cols-2">
-        {["doubles", "singles"].map((type) => {
+        {["singles", "doubles"].map((type) => {
           const isSelected = value === type;
           const isReady = MATCH_TYPES_READY.includes(type);
           return (
@@ -695,6 +697,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
   const [previewGroupStageGroups, setPreviewGroupStageGroups] = useState(null);
   /** 예선 조편성 제출 시 사용할 팀 순서(미리보기와 동일한 랜덤 순서) */
   const [previewGroupStageTeamsForSubmit, setPreviewGroupStageTeamsForSubmit] = useState(null);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   /** 미리보기에서 같은 매치 내 중복 참가자 있는지 (제출 비활성화용) */
   const hasPreviewDuplicate = useMemo(() => {
@@ -863,6 +866,12 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     ) {
       setBracketType(null);
     }
+    if (MATCH_TYPES_READY.includes(type)) setStep(2);
+  };
+
+  const handleBracketTypeChange = (type) => {
+    setBracketType(type);
+    if (BRACKET_TYPES_READY.includes(type)) setStep(3);
   };
 
   const getPreviewOptions = () => {
@@ -931,19 +940,27 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     setTimeout(() => {
       try {
         let input;
-        if (bracketType === "tournament" || bracketType === "group_stage") {
-          const raw = validTournamentTeams.map((t) => ({
+        if (bracketType === "group_stage") {
+          const raw =
+            matchType === "doubles"
+              ? validTournamentTeams.map((t) => ({
+                  player1: (t.player1 ?? "").trim(),
+                  player2: (t.player2 ?? "").trim(),
+                }))
+              : participants.map((p) => ({
+                  player1: (getParticipantName(p) ?? "").trim(),
+                  player2: "",
+                })).filter((t) => t.player1);
+          const shuffled = shuffleTeams(raw);
+          const groups = computeGroupStageGroups(shuffled, teamsPerGroup);
+          setPreviewGroupStageGroups(groups);
+          setPreviewGroupStageTeamsForSubmit(shuffled);
+          input = shuffled;
+        } else if (bracketType === "tournament") {
+          input = validTournamentTeams.map((t) => ({
             player1: (t.player1 ?? "").trim(),
             player2: (t.player2 ?? "").trim(),
           }));
-          if (bracketType === "group_stage") {
-            const shuffled = shuffleTeams(raw);
-            const groups = computeGroupStageGroups(shuffled, teamsPerGroup);
-            setPreviewGroupStageGroups(groups);
-            input = shuffled;
-          } else {
-            input = raw;
-          }
         } else {
           input = participants;
         }
@@ -971,20 +988,27 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     setTimeout(() => {
       try {
         let input;
-        if (bracketType === "tournament" || bracketType === "group_stage") {
-          const raw = validTournamentTeams.map((t) => ({
+        if (bracketType === "group_stage") {
+          const raw =
+            matchType === "doubles"
+              ? validTournamentTeams.map((t) => ({
+                  player1: (t.player1 ?? "").trim(),
+                  player2: (t.player2 ?? "").trim(),
+                }))
+              : participants.map((p) => ({
+                  player1: (getParticipantName(p) ?? "").trim(),
+                  player2: "",
+                })).filter((t) => t.player1);
+          const shuffled = shuffleTeams(raw);
+          const groups = computeGroupStageGroups(shuffled, teamsPerGroup);
+          setPreviewGroupStageGroups(groups);
+          setPreviewGroupStageTeamsForSubmit(shuffled);
+          input = shuffled;
+        } else if (bracketType === "tournament") {
+          input = validTournamentTeams.map((t) => ({
             player1: (t.player1 ?? "").trim(),
             player2: (t.player2 ?? "").trim(),
           }));
-          if (bracketType === "group_stage") {
-            const shuffled = shuffleTeams(raw);
-            const groups = computeGroupStageGroups(shuffled, teamsPerGroup);
-            setPreviewGroupStageGroups(groups);
-            setPreviewGroupStageTeamsForSubmit(shuffled);
-            input = shuffled;
-          } else {
-            input = raw;
-          }
         } else {
           input = participants;
         }
@@ -1027,12 +1051,23 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
         match_type: matchType,
         bracket_type: bracketType,
         participants:
-          isTeamEntryDoubles
-            ? validTournamentTeams.flatMap((t) => [
-                (t.player1 ?? "").trim(),
-                (t.player2 ?? "").trim(),
-              ])
-            : participants,
+          bracketType === "group_stage" &&
+          matchType === "singles" &&
+          previewGroupStageTeamsForSubmit?.length > 0
+            ? previewGroupStageTeamsForSubmit.map((t) => {
+                const p = participants.find((p) => getParticipantName(p) === (t.player1 ?? "").trim());
+                return p !== undefined
+                  ? typeof p === "string"
+                    ? p
+                    : { name: p.name, gender: p.gender }
+                  : (t.player1 ?? "").trim();
+              })
+            : isTeamEntryDoubles
+              ? validTournamentTeams.flatMap((t) => [
+                  (t.player1 ?? "").trim(),
+                  (t.player2 ?? "").trim(),
+                ])
+              : participants,
         seed_config: useSeed && SEED_AVAILABLE_TYPES.includes(bracketType) ? {} : null,
         participant_attendance:
           bracketType === "partner_rotation" ? participantAttendance : null,
@@ -1091,14 +1126,52 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
   };
 
   return (
-    <>
-      <StepIndicator
-        currentStep={step}
-        totalSteps={TOTAL_STEPS}
-        className="mb-8"
-      />
+    <div className="min-h-screen bg-[#F9FAFB]">
+      <header className="sticky top-0 z-30 border-b border-gray-200 bg-white shadow-sm">
+        <div className="relative mx-auto flex max-w-desktop items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          {step > 1 ? (
+            <button
+              type="button"
+              onClick={() => setStep((s) => s - 1)}
+              className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground hover:text-foreground tap-target"
+            >
+              <ArrowLeft className="h-5 w-5 shrink-0" />
+              <span className="font-medium">이전</span>
+            </button>
+          ) : (
+            <Link
+              href="/"
+              className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground hover:text-foreground tap-target"
+            >
+              <ArrowLeft className="h-5 w-5 shrink-0" />
+              <span className="font-medium">이전</span>
+            </Link>
+          )}
+          <Link
+            href="/"
+            className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2 font-bold text-gray-900"
+          >
+            <span className="text-lg leading-tight">MatchBox</span>
+          </Link>
+          <div className="min-w-0 flex-1 text-right">
+            {step >= 3 && matchType && bracketType && (
+              <div className="flex flex-col items-end gap-0 text-sm font-medium text-gray-700 sm:flex-row sm:items-center sm:justify-end sm:gap-x-1">
+                <span>{MATCH_TYPE_LABELS[matchType]}</span>
+                <span className="sm:before:ml-1">{BRACKET_TYPE_LABELS[bracketType]}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
 
-      <form onSubmit={handleSubmit} className="space-y-8">
+      <main className="mx-auto max-w-mobile px-4 py-6 sm:max-w-desktop sm:px-6 sm:py-8">
+        <StepIndicator
+          currentStep={step}
+          totalSteps={TOTAL_STEPS}
+          className="mb-8"
+        />
+
+        <form onSubmit={handleSubmit} className="space-y-8">
         {step === 1 && (
           <Card className="relative z-10 animate-in fade-in duration-200">
             <CardHeader>
@@ -1122,7 +1195,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
             <CardContent className="space-y-6">
               <BracketTypeSelector
                 value={bracketType}
-                onChange={setBracketType}
+                onChange={handleBracketTypeChange}
                 allowedTypes={allowedBracketTypes ?? undefined}
               />
             </CardContent>
@@ -1194,20 +1267,23 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                       <span className="text-sm text-gray-900">4팀</span>
                     </label>
                   </div>
-                  {isTeamEntryDoubles && validTournamentTeamsCount >= 2 && (() => {
-                    const numGroups = Math.ceil(validTournamentTeamsCount / teamsPerGroup);
-                    let lastGroupSize = validTournamentTeamsCount % teamsPerGroup;
+                  {((bracketType === "group_stage" && matchType === "singles" && participants.length >= 2) ||
+                    (isTeamEntryDoubles && validTournamentTeamsCount >= 2)) &&
+                  (() => {
+                    const count = matchType === "singles" ? participants.length : validTournamentTeamsCount;
+                    const numGroups = Math.ceil(count / teamsPerGroup);
+                    let lastGroupSize = count % teamsPerGroup;
                     let actualNumGroups = numGroups;
-                    // 마지막 조가 1팀이면 조 수 조정
                     if (lastGroupSize === 1) {
                       actualNumGroups = Math.max(1, numGroups - 1);
-                      lastGroupSize = validTournamentTeamsCount - (actualNumGroups - 1) * teamsPerGroup;
+                      lastGroupSize = count - (actualNumGroups - 1) * teamsPerGroup;
                     } else if (lastGroupSize === 0) {
                       lastGroupSize = teamsPerGroup;
                     }
                     return (
                       <p className="text-xs text-muted-foreground">
-                        {validTournamentTeamsCount}팀 기준: {actualNumGroups}조
+                        {matchType === "singles" ? `${count}명` : `${count}팀`} 기준: {actualNumGroups}조
+                        {actualNumGroups > 0 && ` (마지막 조는 ${lastGroupSize}${matchType === "singles" ? "명" : "팀"})`}
                       </p>
                     );
                   })()}
@@ -1665,26 +1741,61 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   생성된 대진표를 확인하세요. 마음에 들지 않으면 이전으로 돌아가 수정하거나 새로고침으로 재생성할 수 있습니다.
                 </CardDescription>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!canSubmit || previewLoading}
-                onClick={handlePreviewRefresh}
-                className="shrink-0"
-              >
-                {previewLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    생성 중...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    새로고침
-                  </>
-                )}
-              </Button>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {bracketType === "partner_rotation" &&
+                  previewMatches &&
+                  previewMatches.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        const rounds = [...new Set(previewMatches.map((m) => m.round))].sort((a, b) => a - b);
+                        const lines = [];
+                        for (const round of rounds) {
+                          const roundMatches = previewMatches.filter((m) => m.round === round);
+                          lines.push(`Round ${round}`);
+                          for (const m of roundMatches) {
+                            const t1 = (m.team1_players ?? []).filter(Boolean).join("-");
+                            const t2 = (m.team2_players ?? []).filter(Boolean).join("-");
+                            lines.push(`  Court ${m.court ?? ""}: ${t1} vs ${t2}`);
+                          }
+                          lines.push("");
+                        }
+                        const text = lines.join("\n").trimEnd();
+                        try {
+                          await navigator.clipboard.writeText(text);
+                          setCopySuccess(true);
+                          setTimeout(() => setCopySuccess(false), 2000);
+                        } catch {
+                          setError("클립보드 복사에 실패했습니다.");
+                        }
+                      }}
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      {copySuccess ? "복사 완료" : "복사"}
+                    </Button>
+                  )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!canSubmit || previewLoading}
+                  onClick={handlePreviewRefresh}
+                >
+                  {previewLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      생성 중...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      새로고침
+                    </>
+                  )}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               {bracketType === "partner_rotation" &&
@@ -1743,7 +1854,9 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                               <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                                 {ti + 1}
                               </span>
-                              {[t.player1, t.player2].filter(Boolean).join(" / ")}
+                              {matchType === "doubles"
+                                ? [t.player1, t.player2].filter(Boolean).join(" / ")
+                                : (t.player1 || t.player2 || "").trim()}
                             </li>
                           ))}
                         </ul>
@@ -1908,17 +2021,8 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
           </Card>
         )}
 
-        {step < 4 && (
-          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between sm:gap-4 sticky bottom-4 sm:static z-0 bg-white sm:bg-transparent p-4 sm:p-0 rounded-xl shadow-lg sm:shadow-none border border-gray-200 sm:border-0">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setStep((s) => Math.max(1, s - 1))}
-              disabled={step === 1}
-              className="min-h-[44px] border-gray-300 text-gray-700"
-            >
-              이전
-            </Button>
+        {step >= 3 && step < 4 && (
+          <div className="sticky bottom-4 z-0 flex justify-end sm:static">
             <Button
               type="button"
               variant="default"
@@ -1929,14 +2033,15 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                 }
               }}
               disabled={!canGoNext}
-              className="min-h-[44px]"
+              className="min-h-[44px] w-full sm:w-auto"
             >
-              다음
+              확인
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
         )}
-      </form>
-    </>
+        </form>
+      </main>
+    </div>
   );
 }

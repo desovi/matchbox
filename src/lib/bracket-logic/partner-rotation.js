@@ -210,6 +210,7 @@ function generateMixedDoubles(males, females, attendanceByName, courtCount, opti
         const t2 = match.team2_players;
         const k1 = pairKey(t1[0], t1[1]);
         const k2 = pairKey(t2[0], t2[1]);
+        if (partnerPairsUsed.has(k1) || partnerPairsUsed.has(k2)) continue;
         let newPairs = 0;
         if (!partnerPairsUsed.has(k1)) newPairs++;
         if (!partnerPairsUsed.has(k2)) newPairs++;
@@ -251,6 +252,7 @@ function generateMixedDoubles(males, females, attendanceByName, courtCount, opti
           const t2 = match.team2_players;
           const k1 = pairKey(t1[0], t1[1]);
           const k2 = pairKey(t2[0], t2[1]);
+          if (partnerPairsUsed.has(k1) || partnerPairsUsed.has(k2)) continue;
           let newPairs = 0;
           if (!partnerPairsUsed.has(k1)) newPairs++;
           if (!partnerPairsUsed.has(k2)) newPairs++;
@@ -290,15 +292,15 @@ function generateMixedDoubles(males, females, attendanceByName, courtCount, opti
             [[four[0], four[2]], [four[1], four[3]]],
             [[four[0], four[3]], [four[1], four[2]]],
           ];
-          let bestSplit = splits[0];
-          let minUsed = 2;
+          let bestSplit = null;
           for (const [t1, t2] of splits) {
-            const usedCount = (partnerPairsUsed.has(pairKey(t1[0], t1[1])) ? 1 : 0) + (partnerPairsUsed.has(pairKey(t2[0], t2[1])) ? 1 : 0);
-            if (usedCount < minUsed) {
-              minUsed = usedCount;
-              bestSplit = [t1, t2];
-            }
+            const k1 = pairKey(t1[0], t1[1]);
+            const k2 = pairKey(t2[0], t2[1]);
+            if (partnerPairsUsed.has(k1) || partnerPairsUsed.has(k2)) continue;
+            bestSplit = [t1, t2];
+            break;
           }
+          if (bestSplit === null) break;
           const [team1, team2] = bestSplit;
           const players = [...team1, ...team2];
           roundMatches.push({
@@ -348,7 +350,12 @@ function generateMixedDoubles(males, females, attendanceByName, courtCount, opti
         const match = allMatches[i];
         if (!match.players.includes(p)) continue;
         if (match.players.some((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson)) continue;
+        const k1 = pairKey(match.team1_players[0], match.team1_players[1]);
+        const k2 = pairKey(match.team2_players[0], match.team2_players[1]);
+        if (partnerPairsUsed.has(k1) || partnerPairsUsed.has(k2)) continue;
         used.add(i);
+        partnerPairsUsed.add(k1);
+        partnerPairsUsed.add(k2);
         match.players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
         rounds.push([match]);
         added = true;
@@ -361,7 +368,12 @@ function generateMixedDoubles(males, females, attendanceByName, courtCount, opti
         if (!match.players.includes(p)) continue;
         const over = match.players.filter((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson);
         if (over.length > 1) continue;
+        const k1 = pairKey(match.team1_players[0], match.team1_players[1]);
+        const k2 = pairKey(match.team2_players[0], match.team2_players[1]);
+        if (partnerPairsUsed.has(k1) || partnerPairsUsed.has(k2)) continue;
         used.add(i);
+        partnerPairsUsed.add(k1);
+        partnerPairsUsed.add(k2);
         match.players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
         rounds.push([match]);
         added = true;
@@ -573,9 +585,12 @@ export function generatePartnerRotation(
         if (players.some((p) => usedThisRound.has(p))) continue;
         if (availability.hasTimeInfo && players.some((p) => !availability.isAvailable(p, round))) continue;
         if (players.some((p) => (matchesPerPlayer[p] || 0) >= maxGamesPerPerson)) continue;
+        const pk1 = pairKey(m.team1[0], m.team1[1]);
+        const pk2 = pairKey(m.team2[0], m.team2[1]);
+        if (partnerPairsUsed.has(pk1) || partnerPairsUsed.has(pk2)) continue;
         let newPairs = 0;
-        if (!partnerPairsUsed.has(pairKey(m.team1[0], m.team1[1]))) newPairs++;
-        if (!partnerPairsUsed.has(pairKey(m.team2[0], m.team2[1]))) newPairs++;
+        if (!partnerPairsUsed.has(pk1)) newPairs++;
+        if (!partnerPairsUsed.has(pk2)) newPairs++;
         const need = players.reduce(
           (sum, p) => sum + (maxGamesPerPerson - (matchesPerPlayer[p] || 0)),
           0
@@ -609,28 +624,29 @@ export function generatePartnerRotation(
             [[four[0], four[2]], [four[1], four[3]]],
             [[four[0], four[3]], [four[1], four[2]]],
           ];
-          let bestSplit = splits[0];
-          let minUsed = 2;
+          let bestSplit = null;
           for (const [t1, t2] of splits) {
-            const usedCount = (partnerPairsUsed.has(pairKey(t1[0], t1[1])) ? 1 : 0) + (partnerPairsUsed.has(pairKey(t2[0], t2[1])) ? 1 : 0);
-            if (usedCount < minUsed) {
-              minUsed = usedCount;
-              bestSplit = [t1, t2];
-            }
+            const k1 = pairKey(t1[0], t1[1]);
+            const k2 = pairKey(t2[0], t2[1]);
+            if (partnerPairsUsed.has(k1) || partnerPairsUsed.has(k2)) continue;
+            bestSplit = [t1, t2];
+            break;
           }
-          const [team1, team2] = bestSplit;
-          result.push({
-            round,
-            court,
-            team1_players: team1,
-            team2_players: team2,
-            team1_score: null,
-            team2_score: null,
-            status: "pending",
-          });
-          [...team1, ...team2].forEach((p) => { matchesPerPlayer[p] = (matchesPerPlayer[p] || 0) + 1; });
-          partnerPairsUsed.add(pairKey(team1[0], team1[1]));
-          partnerPairsUsed.add(pairKey(team2[0], team2[1]));
+          if (bestSplit !== null) {
+            const [team1, team2] = bestSplit;
+            result.push({
+              round,
+              court,
+              team1_players: team1,
+              team2_players: team2,
+              team1_score: null,
+              team2_score: null,
+              status: "pending",
+            });
+            [...team1, ...team2].forEach((p) => { matchesPerPlayer[p] = (matchesPerPlayer[p] || 0) + 1; });
+            partnerPairsUsed.add(pairKey(team1[0], team1[1]));
+            partnerPairsUsed.add(pairKey(team2[0], team2[1]));
+          }
         }
         slotIdx++;
         continue;
@@ -670,8 +686,13 @@ export function generatePartnerRotation(
           const players = [m.team1[0], m.team1[1], m.team2[0], m.team2[1]];
           if (!players.includes(p)) continue;
           if (players.some((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson)) continue;
+          const pk1 = pairKey(m.team1[0], m.team1[1]);
+          const pk2 = pairKey(m.team2[0], m.team2[1]);
+          if (partnerPairsUsed.has(pk1) || partnerPairsUsed.has(pk2)) continue;
           usedMatchIdx.add(i);
           usedResultKeysOdd.add(matchKeyOdd(m));
+          partnerPairsUsed.add(pk1);
+          partnerPairsUsed.add(pk2);
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -692,7 +713,10 @@ export function generatePartnerRotation(
           const players = [m.team1[0], m.team1[1], m.team2[0], m.team2[1]];
           if (!players.includes(p)) continue;
           if (players.some((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson)) continue;
+          if (partnerPairsUsed.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsed.has(pairKey(m.team2[0], m.team2[1]))) continue;
           usedResultKeysOdd.add(matchKeyOdd(m));
+          partnerPairsUsed.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsed.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -715,7 +739,10 @@ export function generatePartnerRotation(
           if (!players.includes(p)) continue;
           const over = players.filter((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson);
           if (over.length > 1) continue;
+          if (partnerPairsUsed.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsed.has(pairKey(m.team2[0], m.team2[1]))) continue;
           usedResultKeysOdd.add(matchKeyOdd(m));
+          partnerPairsUsed.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsed.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -737,6 +764,9 @@ export function generatePartnerRotation(
           if (!players.includes(p)) continue;
           const over = players.filter((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson);
           if (over.length > 1) continue;
+          if (partnerPairsUsed.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsed.has(pairKey(m.team2[0], m.team2[1]))) continue;
+          partnerPairsUsed.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsed.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -782,9 +812,12 @@ export function generatePartnerRotation(
         if (players.some((p) => usedThisRound.has(p))) continue;
         if (availability.hasTimeInfo && players.some((p) => !availability.isAvailable(p, round))) continue;
         if (players.some((p) => (matchesPerPlayer[p] || 0) >= maxGamesPerPerson)) continue;
+        const pk1 = pairKey(m.team1[0], m.team1[1]);
+        const pk2 = pairKey(m.team2[0], m.team2[1]);
+        if (partnerPairsUsedEven.has(pk1) || partnerPairsUsedEven.has(pk2)) continue;
         let newPairs = 0;
-        if (!partnerPairsUsedEven.has(pairKey(m.team1[0], m.team1[1]))) newPairs++;
-        if (!partnerPairsUsedEven.has(pairKey(m.team2[0], m.team2[1]))) newPairs++;
+        if (!partnerPairsUsedEven.has(pk1)) newPairs++;
+        if (!partnerPairsUsedEven.has(pk2)) newPairs++;
         const underTwo = players.filter((p) => (matchesPerPlayer[p] || 0) < 2).length;
         const need = players.reduce((sum, p) => sum + (maxGamesPerPerson - (matchesPerPlayer[p] || 0)), 0);
         const earlyLeave = players.filter((p) => getAtt(p)?.type === "early_leave").length;
@@ -817,28 +850,29 @@ export function generatePartnerRotation(
             [[four[0], four[2]], [four[1], four[3]]],
             [[four[0], four[3]], [four[1], four[2]]],
           ];
-          let bestSplit = splits[0];
-          let minUsed = 2;
+          let bestSplit = null;
           for (const [t1, t2] of splits) {
-            const usedCount = (partnerPairsUsedEven.has(pairKey(t1[0], t1[1])) ? 1 : 0) + (partnerPairsUsedEven.has(pairKey(t2[0], t2[1])) ? 1 : 0);
-            if (usedCount < minUsed) {
-              minUsed = usedCount;
-              bestSplit = [t1, t2];
-            }
+            const k1 = pairKey(t1[0], t1[1]);
+            const k2 = pairKey(t2[0], t2[1]);
+            if (partnerPairsUsedEven.has(k1) || partnerPairsUsedEven.has(k2)) continue;
+            bestSplit = [t1, t2];
+            break;
           }
-          const [team1, team2] = bestSplit;
-          result.push({
-            round,
-            court,
-            team1_players: team1,
-            team2_players: team2,
-            team1_score: null,
-            team2_score: null,
-            status: "pending",
-          });
-          [...team1, ...team2].forEach((p) => { matchesPerPlayer[p] = (matchesPerPlayer[p] || 0) + 1; });
-          partnerPairsUsedEven.add(pairKey(team1[0], team1[1]));
-          partnerPairsUsedEven.add(pairKey(team2[0], team2[1]));
+          if (bestSplit !== null) {
+            const [team1, team2] = bestSplit;
+            result.push({
+              round,
+              court,
+              team1_players: team1,
+              team2_players: team2,
+              team1_score: null,
+              team2_score: null,
+              status: "pending",
+            });
+            [...team1, ...team2].forEach((p) => { matchesPerPlayer[p] = (matchesPerPlayer[p] || 0) + 1; });
+            partnerPairsUsedEven.add(pairKey(team1[0], team1[1]));
+            partnerPairsUsedEven.add(pairKey(team2[0], team2[1]));
+          }
         }
         slotIdx++;
         continue;
@@ -878,8 +912,11 @@ export function generatePartnerRotation(
           const players = [m.team1[0], m.team1[1], m.team2[0], m.team2[1]];
           if (!players.includes(p)) continue;
           if (players.some((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson)) continue;
+          if (partnerPairsUsedEven.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsedEven.has(pairKey(m.team2[0], m.team2[1]))) continue;
           usedMatchIdx.add(i);
           usedResultKeys.add(matchKey(m));
+          partnerPairsUsedEven.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsedEven.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -902,8 +939,11 @@ export function generatePartnerRotation(
           if (!players.includes(p)) continue;
           const over = players.filter((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson);
           if (over.length > 1) continue;
+          if (partnerPairsUsedEven.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsedEven.has(pairKey(m.team2[0], m.team2[1]))) continue;
           usedMatchIdx.add(i);
           usedResultKeys.add(matchKey(m));
+          partnerPairsUsedEven.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsedEven.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -924,7 +964,10 @@ export function generatePartnerRotation(
           const players = [m.team1[0], m.team1[1], m.team2[0], m.team2[1]];
           if (!players.includes(p)) continue;
           if (players.some((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson)) continue;
+          if (partnerPairsUsedEven.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsedEven.has(pairKey(m.team2[0], m.team2[1]))) continue;
           usedResultKeys.add(matchKey(m));
+          partnerPairsUsedEven.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsedEven.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -947,7 +990,10 @@ export function generatePartnerRotation(
           if (!players.includes(p)) continue;
           const over = players.filter((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson);
           if (over.length > 1) continue;
+          if (partnerPairsUsedEven.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsedEven.has(pairKey(m.team2[0], m.team2[1]))) continue;
           usedResultKeys.add(matchKey(m));
+          partnerPairsUsedEven.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsedEven.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
@@ -969,6 +1015,9 @@ export function generatePartnerRotation(
           if (!players.includes(p)) continue;
           const over = players.filter((q) => (matchesPerPlayer[q] || 0) >= maxGamesPerPerson);
           if (over.length > 1) continue;
+          if (partnerPairsUsedEven.has(pairKey(m.team1[0], m.team1[1])) || partnerPairsUsedEven.has(pairKey(m.team2[0], m.team2[1]))) continue;
+          partnerPairsUsedEven.add(pairKey(m.team1[0], m.team1[1]));
+          partnerPairsUsedEven.add(pairKey(m.team2[0], m.team2[1]));
           players.forEach((q) => { matchesPerPlayer[q] = (matchesPerPlayer[q] || 0) + 1; });
           result.push({
             round: nextRound,
