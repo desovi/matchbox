@@ -18,7 +18,6 @@ import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   Loader2,
-  CheckCircle,
   User,
   Users,
   Trophy,
@@ -1452,7 +1451,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   {isGroupStageDoubles && teamInputMode === "excel" && (
                     <div className="space-y-3">
                       <p className="text-sm text-muted-foreground">
-                        템플릿을 받아 엑셀에서 정보를 채운 뒤, Excel 파일(.xlsx) 또는 CSV 파일로 저장하여 업로드하세요. "참가자(1)" 열의 이름만 읽어서 사용합니다.
+                        템플릿을 받아 엑셀에서 정보를 채운 뒤, Excel 파일(.xlsx) 또는 CSV 파일로 저장하여 업로드하세요. &quot;참가자(1)&quot; 열의 이름만 읽어서 사용합니다.
                       </p>
                       <div className="flex flex-wrap items-center gap-3">
                         <Button
@@ -1614,7 +1613,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   {isGroupStageSingles && participantInputMode === "excel" && (
                     <div className="space-y-3">
                       <p className="text-sm text-muted-foreground">
-                        템플릿을 받아 엑셀에서 참가자 이름을 채운 뒤, Excel 파일(.xlsx) 또는 CSV 파일로 저장하여 업로드하세요. "참가자 이름" 열의 이름을 읽어서 사용합니다.
+                        템플릿을 받아 엑셀에서 참가자 이름을 채운 뒤, Excel 파일(.xlsx) 또는 CSV 파일로 저장하여 업로드하세요. &quot;참가자 이름&quot; 열의 이름을 읽어서 사용합니다.
                       </p>
                       <div className="flex flex-wrap items-center gap-3">
                         <Button
