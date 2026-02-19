@@ -95,30 +95,48 @@ export function generateTournament(teams, options = {}) {
 
   // 그 외, 또는 예선만 모드: 예선 조 편성 (옵션에 따라 본선 TBD 슬롯 생략)
   const teamsPerGroup = Math.max(2, Math.min(6, Number(options.teamsPerGroup) || 4)); // 기본값 4, 최소 2 최대 6
-  let numGroups = Math.ceil(N / teamsPerGroup);
   
-  // 마지막 조가 1팀만 남으면 안 됨 (최소 2팀). 조 수를 조정
-  const lastGroupSize = N % teamsPerGroup;
-  if (lastGroupSize === 1) {
-    numGroups = Math.max(1, numGroups - 1); // 조 수를 하나 줄여서 마지막 조에 더 많은 팀 배정
-  }
-
-  const result = [];
-
-  // 예선: 조별 라운드 로빈 (간단히 조당 1라운드 = 한 번씩 대전)
-  // 각 조에 팀 배정: 앞 조들은 teamsPerGroup, 마지막 조는 나머지 (최소 2팀 보장)
+  // 조 편성: teamsPerGroup을 초과하는 조가 없도록 배정
+  // 예: 10명, teamsPerGroup=3 → 3, 3, 2, 2 (마지막 조가 4가 아닌 2, 2로 분할)
   const groupIndices = [];
   let remaining = N;
-  for (let g = 0; g < numGroups; g++) {
-    const start = g * teamsPerGroup;
-    // 마지막 조는 남은 팀을 모두 배정 (최소 2팀 보장됨)
-    const size = g === numGroups - 1 ? remaining : Math.min(teamsPerGroup, remaining);
-    const end = start + size;
-    if (size >= 2) {
-      groupIndices.push({ start, end, size });
+  let currentIndex = 0;
+  
+  while (remaining > 0) {
+    if (remaining >= teamsPerGroup) {
+      // teamsPerGroup만큼 채울 수 있으면 그대로 배정
+      const size = teamsPerGroup;
+      groupIndices.push({ start: currentIndex, end: currentIndex + size, size });
+      currentIndex += size;
+      remaining -= size;
+    } else {
+      // 남은 팀이 teamsPerGroup보다 적으면
+      // 최소 2팀 이상이 되도록 배정 (1팀만 남으면 앞 조에서 1팀을 가져와서 2팀 조 2개로 분할)
+      if (remaining === 1 && groupIndices.length > 0) {
+        // 마지막 조에서 1팀을 가져와서 2팀 조 2개로 분할
+        const lastGroup = groupIndices[groupIndices.length - 1];
+        lastGroup.end -= 1;
+        lastGroup.size -= 1;
+        currentIndex -= 1;
+        remaining += 1;
+        // 2팀 조 2개 생성
+        groupIndices.push({ start: currentIndex, end: currentIndex + 2, size: 2 });
+        currentIndex += 2;
+        remaining -= 2;
+      } else if (remaining >= 2) {
+        // 2팀 이상이면 그대로 배정
+        groupIndices.push({ start: currentIndex, end: currentIndex + remaining, size: remaining });
+        remaining = 0;
+      } else {
+        // 1팀만 남고 앞 조가 없으면 (N=1인 경우, 하지만 N>=2로 이미 체크됨)
+        break;
+      }
     }
-    remaining -= size;
   }
+  
+  const numGroups = groupIndices.length;
+
+  const result = [];
 
   for (const { start, end, size } of groupIndices) {
     if (size < 2) continue;

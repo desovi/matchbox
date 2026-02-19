@@ -32,8 +32,11 @@ import {
   RefreshCw,
   LayoutGrid,
   Copy,
+  Upload,
+  FileDown,
 } from "lucide-react";
 import { generateBracket } from "@/lib/bracket-logic";
+import * as XLSX from "xlsx";
 
 const TOTAL_STEPS = 5;
 const ALL_BRACKET_TYPES = [
@@ -487,8 +490,115 @@ function ParticipantInput({
   );
 }
 
-/** 토너먼트 복식용: 참가 팀(페어) 입력. 각 팀 = [player1, player2] */
-function TeamInput({ teams, onChange, minCount = 2, maxCount = 64 }) {
+/** 대표명 한 번에 입력 시: 쉼표 또는 / 로 구분된 문자열에서 이름 배열 추출 */
+function parseTeamNamesFromPaste(text) {
+  if (!text || typeof text !== "string") return [];
+  return text
+    .split(/\s*,\s*|\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Excel/CSV 파일에서 참가자(1) 열 추출 (복식용) */
+function parseTeamNamesFromExcel(file, onSuccess) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+      
+      if (jsonData.length === 0) {
+        onSuccess([]);
+        return;
+      }
+      
+      const headers = jsonData[0];
+      const player1ColIndex = headers.findIndex((h) => 
+        String(h).includes("참가자(1)") || String(h).includes("참가자1") || String(h).trim() === "참가자(1)"
+      );
+      
+      if (player1ColIndex === -1) {
+        onSuccess([]);
+        return;
+      }
+      
+      const names = [];
+      for (let i = 1; i < jsonData.length; i++) {
+        const row = jsonData[i];
+        const name = row[player1ColIndex];
+        if (name && String(name).trim()) {
+          names.push(String(name).trim());
+        }
+      }
+      onSuccess(names);
+    } catch (err) {
+      console.error("Excel 파싱 오류:", err);
+      onSuccess([]);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/** Excel/CSV 파일에서 참가자 이름 열 추출 (단식용) */
+function parseParticipantNamesFromExcel(file, onSuccess) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+      
+      if (jsonData.length === 0) {
+        onSuccess([]);
+        return;
+      }
+      
+      const headers = jsonData[0];
+      const nameColIndex = headers.findIndex((h) => 
+        String(h).includes("참가자 이름") || String(h).includes("참가자") || String(h).trim() === "참가자 이름"
+      );
+      
+      if (nameColIndex === -1) {
+        onSuccess([]);
+        return;
+      }
+      
+      const names = [];
+      for (let i = 1; i < jsonData.length; i++) {
+        const row = jsonData[i];
+        const name = row[nameColIndex];
+        if (name && String(name).trim()) {
+          names.push(String(name).trim());
+        }
+      }
+      onSuccess(names);
+    } catch (err) {
+      console.error("Excel 파싱 오류:", err);
+      onSuccess([]);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/** CSV 텍스트에서 첫 번째 열(대표명) 추출. 첫 줄은 헤더로 건너뛸 수 있음 */
+function parseTeamNamesFromCsv(csvText) {
+  if (!csvText || typeof csvText !== "string") return [];
+  const lines = csvText.split(/\r?\n/).filter((line) => line.trim());
+  const names = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const firstCell = line.includes(",") ? line.split(",")[0].trim() : line.trim();
+    const decoded = firstCell.replace(/^"|"$/g, "").trim();
+    if (decoded && (i > 0 || decoded !== "대표명")) names.push(decoded);
+  }
+  return names;
+}
+
+/** 토너먼트 복식용: 참가 팀(페어) 입력. 각 팀 = [player1, player2]. representativeOnly면 player1만 있어도 팀으로 인정 */
+function TeamInput({ teams, onChange, minCount = 2, maxCount = 64, representativeOnly = false }) {
   const addTeam = () => {
     if (teams.length >= maxCount) return;
     onChange([...teams, { player1: "", player2: "" }]);
@@ -503,9 +613,11 @@ function TeamInput({ teams, onChange, minCount = 2, maxCount = 64 }) {
     );
   };
 
-  const validCount = teams.filter(
-    (t) => (t.player1 ?? "").trim() && (t.player2 ?? "").trim()
-  ).length;
+  const validCount = teams.filter((t) => {
+    const p1 = (t.player1 ?? "").trim();
+    const p2 = (t.player2 ?? "").trim();
+    return representativeOnly ? !!p1 : !!p1 && !!p2;
+  }).length;
 
   return (
     <div>
@@ -687,6 +799,14 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     { player1: "", player2: "" },
     { player1: "", player2: "" },
   ]);
+  /** 예선 조편성 복식 전용: 입력 방식 "manual" | "paste" | "excel" */
+  const [teamInputMode, setTeamInputMode] = useState("manual");
+  /** 예선 조편성 복식 "한 번에 입력"용 텍스트 */
+  const [teamNamesPaste, setTeamNamesPaste] = useState("");
+  /** 예선 조편성 단식 전용: 입력 방식 "manual" | "paste" | "excel" */
+  const [participantInputMode, setParticipantInputMode] = useState("manual");
+  /** 예선 조편성 단식 "한 번에 입력"용 텍스트 */
+  const [participantNamesPaste, setParticipantNamesPaste] = useState("");
   /** 토너먼트/예선 조편성: 조당 팀 수 (3 또는 4) */
   const [teamsPerGroup, setTeamsPerGroup] = useState(4);
   const [loading, setLoading] = useState(false);
@@ -825,16 +945,22 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
         ? BRACKET_TYPES_DOUBLES
         : null;
 
-  const courtRequired =
-    DOUBLES_COURT_TYPES.includes(bracketType) &&
-    (!courtStartTime || !courtEndTime);
   const isTournamentDoubles = bracketType === "tournament" && matchType === "doubles";
   const isGroupStageDoubles = bracketType === "group_stage" && matchType === "doubles";
+  const isGroupStageSingles = bracketType === "group_stage" && matchType === "singles";
   const isTeamEntryDoubles = isTournamentDoubles || isGroupStageDoubles;
-  const validTournamentTeams = tournamentTeams.filter(
-    (t) => (t.player1 ?? "").trim() && (t.player2 ?? "").trim()
-  );
+  const validTournamentTeams = tournamentTeams.filter((t) => {
+    const p1 = (t.player1 ?? "").trim();
+    const p2 = (t.player2 ?? "").trim();
+    if (bracketType === "group_stage" && matchType === "doubles") return !!p1;
+    return !!p1 && !!p2;
+  });
   const validTournamentTeamsCount = validTournamentTeams.length;
+
+  const courtRequired =
+    DOUBLES_COURT_TYPES.includes(bracketType) &&
+    bracketType !== "group_stage" &&
+    (!courtStartTime || !courtEndTime);
 
   const canGoNext =
     (step === 1 && matchType !== null) ||
@@ -842,9 +968,10 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     (step === 3 &&
       (isTeamEntryDoubles
         ? validTournamentTeamsCount >= 2 &&
-          (courtStartTime && courtEndTime)
+          (bracketType === "group_stage" || (courtStartTime && courtEndTime))
         : participants.length >= 2 &&
           (!DOUBLES_COURT_TYPES.includes(bracketType) ||
+            bracketType === "group_stage" ||
             (courtStartTime && courtEndTime))));
 
   const canSubmit =
@@ -854,6 +981,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
           ? validTournamentTeamsCount >= 2
       : participants.length >= 2) &&
     (!DOUBLES_COURT_TYPES.includes(bracketType) ||
+      bracketType === "group_stage" ||
       (courtStartTime && courtEndTime)) &&
     !loading;
 
@@ -876,26 +1004,27 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
 
   const getPreviewOptions = () => {
     const isDoubles = DOUBLES_COURT_TYPES.includes(bracketType);
-    const courtCountVal = isDoubles ? courtCount : 1;
+    const isGroupStage = bracketType === "group_stage";
+    const courtCountVal = isDoubles && !isGroupStage ? courtCount : 1;
     let totalHours = totalCourtHours;
-    if (totalHours <= 0 && isDoubles && courtStartTime && courtEndTime) {
+    if (totalHours <= 0 && isDoubles && !isGroupStage && courtStartTime && courtEndTime) {
       const per = courtDurationHours(courtStartTime, courtEndTime);
       if (per != null && per > 0) totalHours = per * courtCountVal;
     }
     return {
     participant_attendance:
       bracketType === "partner_rotation" ? participantAttendance : undefined,
-    court_count: courtCountVal,
-    total_court_hours: isDoubles && totalHours > 0 ? totalHours : undefined,
+    court_count: isGroupStage ? undefined : courtCountVal,
+    total_court_hours: isDoubles && !isGroupStage && totalHours > 0 ? totalHours : undefined,
     match_duration_minutes: 30,
     max_games_per_person:
       bracketType === "partner_rotation" ? maxGamesPerPerson : undefined,
     court_start_time:
-      DOUBLES_COURT_TYPES.includes(bracketType) ? courtStartTime || undefined : undefined,
+      DOUBLES_COURT_TYPES.includes(bracketType) && !isGroupStage ? courtStartTime || undefined : undefined,
     court_end_time:
-      DOUBLES_COURT_TYPES.includes(bracketType) ? courtEndTime || undefined : undefined,
+      DOUBLES_COURT_TYPES.includes(bracketType) && !isGroupStage ? courtEndTime || undefined : undefined,
     court_slots:
-      DOUBLES_COURT_TYPES.includes(bracketType) && perCourtTimesOverride
+      DOUBLES_COURT_TYPES.includes(bracketType) && !isGroupStage && perCourtTimesOverride
         ? courtSlots
         : undefined,
     teamsPerGroup:
@@ -913,20 +1042,41 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     return a;
   };
 
-  /** 예선 조편성: 팀 배열을 조당 팀 수에 맞춰 그룹으로 나눔 (마지막 조 최소 2팀) */
+  /** 예선 조편성: 팀 배열을 조당 팀 수에 맞춰 그룹으로 나눔 (각 조는 최소 2팀, 최대 perGroup팀) */
   const computeGroupStageGroups = (teams, perGroup) => {
     const N = teams.length;
-    let numGroups = Math.ceil(N / perGroup);
-    if (N % perGroup === 1) numGroups = Math.max(1, numGroups - 1);
+    if (N < 2) return [];
     const groups = [];
-    let idx = 0;
     let remaining = N;
-    for (let g = 0; g < numGroups; g++) {
-      const size = g === numGroups - 1 ? remaining : Math.min(perGroup, remaining);
-      if (size >= 2) groups.push(teams.slice(idx, idx + size));
-      idx += size;
-      remaining -= size;
+    let idx = 0;
+
+    while (remaining > 0) {
+      if (remaining >= perGroup) {
+        const size = perGroup;
+        groups.push(teams.slice(idx, idx + size));
+        idx += size;
+        remaining -= size;
+      } else {
+        // 남은 팀이 perGroup보다 적을 때
+        if (remaining === 1 && groups.length > 0) {
+          // 마지막 조에서 1팀을 가져와서 2팀 조를 하나 더 만든다.
+          const lastGroup = groups[groups.length - 1];
+          const moved = lastGroup.pop();
+          // moved가 빠진 그룹은 여전히 최소 2팀 이상이어야 함 (perGroup 최소 2 보장)
+          const newGroup = [moved, teams[idx]];
+          groups.push(newGroup);
+          idx += 1;
+          remaining = 0;
+        } else if (remaining >= 2) {
+          groups.push(teams.slice(idx, idx + remaining));
+          idx += remaining;
+          remaining = 0;
+        } else {
+          break;
+        }
+      }
     }
+
     return groups;
   };
 
@@ -1072,16 +1222,16 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
         participant_attendance:
           bracketType === "partner_rotation" ? participantAttendance : null,
         court_count:
-          DOUBLES_COURT_TYPES.includes(bracketType) ? courtCount : null,
+          DOUBLES_COURT_TYPES.includes(bracketType) && bracketType !== "group_stage" ? courtCount : null,
         match_duration_minutes: 30,
         max_games_per_person:
           bracketType === "partner_rotation" ? maxGamesPerPerson : null,
         court_start_time:
-          DOUBLES_COURT_TYPES.includes(bracketType) ? courtStartTime || null : null,
+          DOUBLES_COURT_TYPES.includes(bracketType) && bracketType !== "group_stage" ? courtStartTime || null : null,
         court_end_time:
-          DOUBLES_COURT_TYPES.includes(bracketType) ? courtEndTime || null : null,
+          DOUBLES_COURT_TYPES.includes(bracketType) && bracketType !== "group_stage" ? courtEndTime || null : null,
         court_slots:
-          DOUBLES_COURT_TYPES.includes(bracketType) && perCourtTimesOverride
+          DOUBLES_COURT_TYPES.includes(bracketType) && bracketType !== "group_stage" && perCourtTimesOverride
             ? courtSlots
             : null,
         settings: null,
@@ -1210,30 +1360,333 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
               </CardTitle>
               <CardDescription>
                 {isTeamEntryDoubles
-                  ? "여자복식·남자복식·혼합복식 모두 페어로 신청합니다. 팀당 2명을 입력하세요. (최소 2팀)"
+                  ? "참가자 이름을 입력하세요. (최소 2팀)"
                   : "참가자 이름을 입력하세요. (최소 4명, 최대 64명)"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               {isTeamEntryDoubles ? (
-                <TeamInput
-                  teams={tournamentTeams}
-                  onChange={setTournamentTeams}
-                  minCount={2}
-                  maxCount={64}
-                />
+                <>
+                  {isGroupStageDoubles && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-gray-900">입력 방식</p>
+                      <div className="flex flex-wrap gap-2">
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="teamInputMode"
+                            value="manual"
+                            checked={teamInputMode === "manual"}
+                            onChange={() => setTeamInputMode("manual")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">팀별로 입력 (선수1, 선수2)</span>
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="teamInputMode"
+                            value="paste"
+                            checked={teamInputMode === "paste"}
+                            onChange={() => setTeamInputMode("paste")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">한 번에 입력 (대표명)</span>
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="teamInputMode"
+                            value="excel"
+                            checked={teamInputMode === "excel"}
+                            onChange={() => setTeamInputMode("excel")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">엑셀(CSV) 업로드</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                  {(!isGroupStageDoubles || teamInputMode === "manual") && (
+                    <TeamInput
+                      teams={tournamentTeams}
+                      onChange={setTournamentTeams}
+                      minCount={2}
+                      maxCount={64}
+                      representativeOnly={isGroupStageDoubles}
+                    />
+                  )}
+                  {isGroupStageDoubles && teamInputMode === "paste" && (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        페어 대표명을 쉼표(,) 또는 줄바꿈으로 구분해 입력하세요. 각 이름은 한 팀(페어)을 의미합니다.
+                      </p>
+                      <textarea
+                        value={teamNamesPaste}
+                        onChange={(e) => setTeamNamesPaste(e.target.value)}
+                        placeholder={"예: 홍길동, 김철수, 이영희\n박민수"}
+                        className="min-h-[120px] w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                        rows={4}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const names = parseTeamNamesFromPaste(teamNamesPaste);
+                          if (names.length === 0) return;
+                          setTournamentTeams(
+                            names.map((name) => ({ player1: name, player2: "" }))
+                          );
+                        }}
+                      >
+                        목록 적용
+                      </Button>
+                      {validTournamentTeamsCount > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          적용됨: <strong>{validTournamentTeamsCount}팀</strong>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {isGroupStageDoubles && teamInputMode === "excel" && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        템플릿을 받아 엑셀에서 정보를 채운 뒤, Excel 파일(.xlsx) 또는 CSV 파일로 저장하여 업로드하세요. "참가자(1)" 열의 이름만 읽어서 사용합니다.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const headers = ["순번", "참가자1", "클럽", "참가자2", "클럽", "비고"];
+                            const worksheet = XLSX.utils.aoa_to_sheet([headers]);
+                            const workbook = XLSX.utils.book_new();
+                            XLSX.utils.book_append_sheet(workbook, worksheet, "팀 목록");
+                            XLSX.writeFile(workbook, "팀_등록_템플릿.xlsx");
+                          }}
+                        >
+                          <FileDown className="mr-2 h-4 w-4" />
+                          템플릿 다운로드
+                        </Button>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50">
+                          <Upload className="h-4 w-4" />
+                          <span>Excel/CSV 파일 선택</span>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls,.csv"
+                            className="sr-only"
+                            onChange={(e) => {
+                              const file = e.target?.files?.[0];
+                              if (!file) return;
+                              
+                              if (file.name.endsWith(".csv")) {
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                  const text = reader.result;
+                                  const names = parseTeamNamesFromCsv(
+                                    typeof text === "string" ? text : ""
+                                  );
+                                  if (names.length > 0) {
+                                    setTournamentTeams(
+                                      names.map((name) => ({ player1: name, player2: "" }))
+                                    );
+                                  }
+                                  e.target.value = "";
+                                };
+                                reader.readAsText(file, "UTF-8");
+                              } else {
+                                parseTeamNamesFromExcel(file, (names) => {
+                                  if (names.length > 0) {
+                                    setTournamentTeams(
+                                      names.map((name) => ({ player1: name, player2: "" }))
+                                    );
+                                  }
+                                  e.target.value = "";
+                                });
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+                      {validTournamentTeamsCount > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          업로드됨: <strong>{validTournamentTeamsCount}팀</strong>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {isGroupStageDoubles && teamInputMode !== "manual" && validTournamentTeamsCount > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      예선 조편성에서는 팀 대표명만 있어도 됩니다. 파트너 정보는 엑셀 등에서 별도 관리하세요.
+                    </p>
+                  )}
+                </>
               ) : (
-                <ParticipantInput
-                  participants={participants}
-                  onChange={handleParticipantsChange}
-                  minCount={4}
-                  maxCount={64}
-                  descriptionExtra={
-                    matchType === "doubles"
-                      ? "복식: 참가자 2명씩 페어로 매칭됩니다."
-                      : undefined
-                  }
-                />
+                <>
+                  {isGroupStageSingles && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-gray-900">입력 방식</p>
+                      <div className="flex flex-wrap gap-2">
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="participantInputMode"
+                            value="manual"
+                            checked={participantInputMode === "manual"}
+                            onChange={() => setParticipantInputMode("manual")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">개별 입력</span>
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="participantInputMode"
+                            value="paste"
+                            checked={participantInputMode === "paste"}
+                            onChange={() => setParticipantInputMode("paste")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">한 번에 입력</span>
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="participantInputMode"
+                            value="excel"
+                            checked={participantInputMode === "excel"}
+                            onChange={() => setParticipantInputMode("excel")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">엑셀(CSV) 업로드</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                  {(!isGroupStageSingles || participantInputMode === "manual") && (
+                    <ParticipantInput
+                      participants={participants}
+                      onChange={handleParticipantsChange}
+                      minCount={4}
+                      maxCount={64}
+                      descriptionExtra={
+                        matchType === "doubles"
+                          ? "복식: 참가자 2명씩 페어로 매칭됩니다."
+                          : undefined
+                      }
+                    />
+                  )}
+                  {isGroupStageSingles && participantInputMode === "paste" && (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        참가자 이름을 쉼표(,) 또는 줄바꿈으로 구분해 입력하세요.
+                      </p>
+                      <textarea
+                        value={participantNamesPaste}
+                        onChange={(e) => setParticipantNamesPaste(e.target.value)}
+                        placeholder={"예: 홍길동, 김철수, 이영희\n박민수"}
+                        className="min-h-[120px] w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                        rows={4}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const names = parseTeamNamesFromPaste(participantNamesPaste);
+                          if (names.length === 0) return;
+                          handleParticipantsChange(
+                            names.map((name) => (typeof name === "string" ? name : name.name || ""))
+                          );
+                        }}
+                      >
+                        목록 적용
+                      </Button>
+                      {participants.length > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          적용됨: <strong>{participants.length}명</strong>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {isGroupStageSingles && participantInputMode === "excel" && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        템플릿을 받아 엑셀에서 참가자 이름을 채운 뒤, Excel 파일(.xlsx) 또는 CSV 파일로 저장하여 업로드하세요. "참가자 이름" 열의 이름을 읽어서 사용합니다.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const headers = ["순번", "참가자 이름", "클럽", "비고"];
+                            const worksheet = XLSX.utils.aoa_to_sheet([headers]);
+                            const workbook = XLSX.utils.book_new();
+                            XLSX.utils.book_append_sheet(workbook, worksheet, "참가자 목록");
+                            XLSX.writeFile(workbook, "참가자_등록_템플릿.xlsx");
+                          }}
+                        >
+                          <FileDown className="mr-2 h-4 w-4" />
+                          템플릿 다운로드
+                        </Button>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm hover:bg-gray-50">
+                          <Upload className="h-4 w-4" />
+                          <span>Excel/CSV 파일 선택</span>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls,.csv"
+                            className="sr-only"
+                            onChange={(e) => {
+                              const file = e.target?.files?.[0];
+                              if (!file) return;
+                              
+                              if (file.name.endsWith(".csv")) {
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                  const text = reader.result;
+                                  const lines = (typeof text === "string" ? text : "").split(/\r?\n/).filter((line) => line.trim());
+                                  const names = [];
+                                  for (let i = 0; i < lines.length; i++) {
+                                    const line = lines[i];
+                                    const firstCell = line.includes(",") ? line.split(",")[0].trim() : line.trim();
+                                    const decoded = firstCell.replace(/^"|"$/g, "").trim();
+                                    if (decoded && (i > 0 || (decoded !== "참가자 이름" && decoded !== "대표명"))) {
+                                      names.push(decoded);
+                                    }
+                                  }
+                                  if (names.length > 0) {
+                                    handleParticipantsChange(
+                                      names.map((name) => name)
+                                    );
+                                  }
+                                  e.target.value = "";
+                                };
+                                reader.readAsText(file, "UTF-8");
+                              } else {
+                                parseParticipantNamesFromExcel(file, (names) => {
+                                  if (names.length > 0) {
+                                    handleParticipantsChange(
+                                      names.map((name) => name)
+                                    );
+                                  }
+                                  e.target.value = "";
+                                });
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+                      {participants.length > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          업로드됨: <strong>{participants.length}명</strong>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
               {(bracketType === "tournament" || bracketType === "group_stage") && (
                 <div className="space-y-2">
@@ -1289,7 +1742,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   })()}
                 </div>
               )}
-              {DOUBLES_COURT_TYPES.includes(bracketType) && (
+              {DOUBLES_COURT_TYPES.includes(bracketType) && bracketType !== "group_stage" && (
                 <>
                   <div className="space-y-3">
                     <p className="text-sm font-medium text-gray-900">
@@ -1708,21 +2161,13 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   {error}
                 </div>
               )}
-              <div className="flex gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStep(3)}
-                  className="min-h-[44px] flex-1"
-                >
-                  이전
-                </Button>
+              <div>
                 <Button
                   type="button"
                   size="lg"
                   disabled={!canSubmit}
                   onClick={handlePreview}
-                  className="flex-1 min-h-[48px]"
+                  className="w-full min-h-[48px]"
                 >
                   <ArrowRight className="mr-2 h-5 w-5" />
                   미리보기
@@ -1985,24 +2430,12 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   {error}
                 </div>
               )}
-              <div className="flex flex-wrap gap-3 pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setStep(4);
-                    setPreviewMatches(null);
-                  }}
-                  className="min-h-[44px] flex-1"
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  이전
-                </Button>
+              <div className="pt-4">
                 <Button
                   type="submit"
                   size="lg"
                   disabled={!canSubmit || loading || (step === 5 && hasPreviewDuplicate)}
-                  className="flex-1 min-h-[48px]"
+                  className="w-full min-h-[48px]"
                 >
                   {loading ? (
                     <>
@@ -2022,7 +2455,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
         )}
 
         {step >= 3 && step < 4 && (
-          <div className="sticky bottom-4 z-0 flex justify-end sm:static">
+          <div className="sticky bottom-4 z-0 sm:static">
             <Button
               type="button"
               variant="default"
@@ -2033,7 +2466,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                 }
               }}
               disabled={!canGoNext}
-              className="min-h-[44px] w-full sm:w-auto"
+              className="min-h-[44px] w-full"
             >
               확인
               <ArrowRight className="ml-2 h-4 w-4" />
