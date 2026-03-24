@@ -15,7 +15,14 @@ function groupByRound(matches) {
     map.set(m.round, list);
   }
   Array.from(map.values()).forEach((list) => {
-    list.sort((a, b) => a.court - b.court || a.id.localeCompare(b.id));
+    list.sort((a, b) => {
+      const courtA = Number(a.court) || 0;
+      const courtB = Number(b.court) || 0;
+      if (courtA !== courtB) return courtA - courtB;
+      const idA = a.id != null ? String(a.id) : "";
+      const idB = b.id != null ? String(b.id) : "";
+      return idA.localeCompare(idB);
+    });
   });
   return map;
 }

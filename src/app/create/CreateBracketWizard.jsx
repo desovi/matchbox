@@ -13,6 +13,7 @@ import {
   BRACKET_TYPES_SINGLES,
   BRACKET_TYPES_DOUBLES,
   MATCH_TYPE_LABELS,
+  getBracketTypeLabel,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -36,6 +37,8 @@ import {
 } from "lucide-react";
 import { generateBracket } from "@/lib/bracket-logic";
 import * as XLSX from "xlsx";
+import html2canvas from "html2canvas";
+import { BracketGrid } from "@/app/bracket/[id]/BracketGrid";
 
 const TOTAL_STEPS = 5;
 const ALL_BRACKET_TYPES = [
@@ -498,7 +501,7 @@ function parseTeamNamesFromPaste(text) {
     .filter(Boolean);
 }
 
-/** Excel/CSV 파일에서 참가자(1) 열 추출 (복식용) */
+/** Excel/CSV 파일에서 참가자(1) 및 클럽 정보 추출 (복식용). onSuccess([{ name, clubs }]) */
 function parseTeamNamesFromExcel(file, onSuccess) {
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -514,7 +517,7 @@ function parseTeamNamesFromExcel(file, onSuccess) {
       }
       
       const headers = jsonData[0];
-      const player1ColIndex = headers.findIndex((h) => 
+      const player1ColIndex = headers.findIndex((h) =>
         String(h).includes("참가자(1)") || String(h).includes("참가자1") || String(h).trim() === "참가자(1)"
       );
       
@@ -522,16 +525,35 @@ function parseTeamNamesFromExcel(file, onSuccess) {
         onSuccess([]);
         return;
       }
+
+      // 클럽 열 인덱스들 ("클럽" 이 포함된 헤더)
+      const clubColIndices = headers
+        .map((h, idx) => ({ label: String(h), idx }))
+        .filter((h) => h.label.includes("클럽"))
+        .map((h) => h.idx);
       
-      const names = [];
+      const rows = [];
       for (let i = 1; i < jsonData.length; i++) {
         const row = jsonData[i];
-        const name = row[player1ColIndex];
-        if (name && String(name).trim()) {
-          names.push(String(name).trim());
+        const nameCell = row[player1ColIndex];
+        const name = nameCell && String(nameCell).trim();
+        if (!name) continue;
+
+        const clubs = [];
+        for (const ci of clubColIndices) {
+          const v = row[ci];
+          if (!v) continue;
+          String(v)
+            .split(/[,/]/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .forEach((c) => {
+              if (!clubs.includes(c)) clubs.push(c);
+            });
         }
+        rows.push({ name, clubs });
       }
-      onSuccess(names);
+      onSuccess(rows);
     } catch (err) {
       console.error("Excel 파싱 오류:", err);
       onSuccess([]);
@@ -817,12 +839,17 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
   /** 예선 조편성 제출 시 사용할 팀 순서(미리보기와 동일한 랜덤 순서) */
   const [previewGroupStageTeamsForSubmit, setPreviewGroupStageTeamsForSubmit] = useState(null);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [imageCaptureData, setImageCaptureData] = useState(null);
+  const imageCaptureRef = useRef(null);
+  /** 5단계에서 어떤 저장 버튼을 눌렀는지 ('image' | 'link' | null) */
+  const [savingAction, setSavingAction] = useState(null);
 
-  /** 미리보기에서 같은 매치 내 중복 참가자 있는지 (제출 비활성화용) */
+  /** 미리보기에서 같은 매치 내 중복 참가자 있는지 (실제 이름만 검사, TBD/빈값 제외) */
   const hasPreviewDuplicate = useMemo(() => {
     if (!previewMatches || previewMatches.length === 0) return false;
+    const isRealName = (s) => s && String(s).trim() && String(s).trim() !== "TBD";
     return previewMatches.some((m) => {
-      const all = [...(m.team1_players ?? []), ...(m.team2_players ?? [])].filter(Boolean);
+      const all = [...(m.team1_players ?? []), ...(m.team2_players ?? [])].filter(isRealName);
       return all.length !== new Set(all).size;
     });
   }, [previewMatches]);
@@ -984,6 +1011,13 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
       (courtStartTime && courtEndTime)) &&
     !loading;
 
+  /** 5단계 저장 버튼: 최소 조건만 만족하면 활성화 (이미 4단계에서 검증됨) */
+  const canSaveAtStep5 =
+    matchType != null &&
+    bracketType != null &&
+    (isTeamEntryDoubles ? validTournamentTeamsCount >= 2 : participants.length >= 2) &&
+    !loading;
+
   const handleMatchTypeChange = (type) => {
     setMatchType(type);
     if (
@@ -1041,41 +1075,111 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     return a;
   };
 
-  /** 예선 조편성: 팀 배열을 조당 팀 수에 맞춰 그룹으로 나눔 (각 조는 최소 2팀, 최대 perGroup팀) */
+  function normalizeClubToken(raw) {
+    if (!raw) return "";
+    let s = String(raw).toLowerCase().trim();
+    s = s.replace(/^https?:\/\//, "");
+    if (s.includes("/")) s = s.split("/")[0];
+    s = s.replace(/members?$/g, "");
+    s = s.replace(/club$/g, "");
+    s = s.replace(/클럽$/g, "");
+    s = s.replace(/동호회$/g, "");
+    s = s.replace(/\s+/g, " ").trim();
+    return s;
+  }
+
+  function extractClubKeysFromTeam(team) {
+    const rawClubs = Array.isArray(team?.clubs) ? team.clubs : [];
+    const keys = [];
+    rawClubs.forEach((c) => {
+      String(c)
+        .split(/[,/]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((part) => {
+          const k = normalizeClubToken(part);
+          if (k && !keys.includes(k)) keys.push(k);
+        });
+    });
+    return keys;
+  }
+
+  function clubKeysOverlap(a, b) {
+    if (!a?.length || !b?.length) return false;
+    for (const ka of a) {
+      for (const kb of b) {
+        if (!ka || !kb) continue;
+        if (ka === kb) return true;
+        if (ka.length >= 3 && kb.includes(ka)) return true;
+        if (kb.length >= 3 && ka.includes(kb)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** 예선 조편성: 팀 배열을 조당 팀 수에 맞춰 그룹으로 나눔 (각 조는 최소 2팀, 최대 perGroup팀, 같은 클럽은 최대한 다른 조로 분산) */
   const computeGroupStageGroups = (teams, perGroup) => {
     const N = teams.length;
     if (N < 2) return [];
-    const groups = [];
-    let remaining = N;
-    let idx = 0;
 
+    // 1단계: 각 조의 목표 인원 수 결정 (예: 10명, perGroup=3 → [3,3,2,2])
+    const sizes = [];
+    let remaining = N;
     while (remaining > 0) {
       if (remaining >= perGroup) {
-        const size = perGroup;
-        groups.push(teams.slice(idx, idx + size));
-        idx += size;
-        remaining -= size;
-      } else {
-        // 남은 팀이 perGroup보다 적을 때
-        if (remaining === 1 && groups.length > 0) {
-          // 마지막 조에서 1팀을 가져와서 2팀 조를 하나 더 만든다.
-          const lastGroup = groups[groups.length - 1];
-          const moved = lastGroup.pop();
-          // moved가 빠진 그룹은 여전히 최소 2팀 이상이어야 함 (perGroup 최소 2 보장)
-          const newGroup = [moved, teams[idx]];
-          groups.push(newGroup);
-          idx += 1;
-          remaining = 0;
-        } else if (remaining >= 2) {
-          groups.push(teams.slice(idx, idx + remaining));
-          idx += remaining;
+        sizes.push(perGroup);
+        remaining -= perGroup;
+      } else if (remaining === 1 && sizes.length > 0) {
+        const last = sizes.pop();
+        if (last > 2) {
+          sizes.push(last - 1);
+          sizes.push(2);
           remaining = 0;
         } else {
-          break;
+          sizes.push(last + remaining);
+          remaining = 0;
         }
+      } else if (remaining >= 2) {
+        sizes.push(remaining);
+        remaining = 0;
+      } else {
+        break;
       }
     }
 
+    const teamKeys = teams.map((t) => extractClubKeysFromTeam(t));
+    const groupIndices = sizes.map(() => []);
+
+    // 2단계: 같은 클럽이 최대한 다른 조로 가도록 각 팀을 조에 배치
+    for (let ti = 0; ti < N; ti++) {
+      const keys = teamKeys[ti];
+      let bestGroup = -1;
+      let bestScore = Infinity;
+
+      for (let gi = 0; gi < sizes.length; gi++) {
+        if (groupIndices[gi].length >= sizes[gi]) continue;
+        let conflicts = 0;
+        for (const ei of groupIndices[gi]) {
+          if (clubKeysOverlap(keys, teamKeys[ei])) conflicts++;
+        }
+        const sizeAfter = groupIndices[gi].length + 1;
+        const score = conflicts * 10 + sizeAfter; // 충돌이 적을수록, 인원이 적을수록 우선
+        if (score < bestScore) {
+          bestScore = score;
+          bestGroup = gi;
+        }
+      }
+
+      if (bestGroup === -1) continue;
+      groupIndices[bestGroup].push(ti);
+    }
+
+    const groups = [];
+    for (const idxs of groupIndices) {
+      if (idxs.length >= 2) {
+        groups.push(idxs.map((i) => teams[i]));
+      }
+    }
     return groups;
   };
 
@@ -1189,34 +1293,132 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!canSubmit || !bracketType || !matchType) return;
-    if (step === 5 && hasPreviewDuplicate) return;
+  const handleCopyPreviewText = async () => {
+    try {
+      let text = "";
+      if (
+        bracketType === "group_stage" &&
+        Array.isArray(previewGroupStageGroups) &&
+        previewGroupStageGroups.length > 0
+      ) {
+        const lines = [];
+        previewGroupStageGroups.forEach((group, gi) => {
+          lines.push(`${gi + 1}조`);
+          group.forEach((t, ti) => {
+            const name =
+              matchType === "doubles"
+                ? [t.player1, t.player2].filter(Boolean).join(" / ")
+                : (t.player1 || t.player2 || "").trim();
+            if (name) {
+              lines.push(`  ${ti + 1}. ${name}`);
+            }
+          });
+          lines.push("");
+        });
+        text = lines.join("\n").trimEnd();
+      } else if (previewMatches && previewMatches.length > 0) {
+        const rounds = [...new Set(previewMatches.map((m) => m.round))].sort(
+          (a, b) => a - b
+        );
+        const lines = [];
+        for (const round of rounds) {
+          const roundMatches = previewMatches.filter((m) => m.round === round);
+          lines.push(`Round ${round}`);
+          for (const m of roundMatches) {
+            const t1 = (m.team1_players ?? []).filter(Boolean).join("-");
+            const t2 = (m.team2_players ?? []).filter(Boolean).join("-");
+            lines.push(`  Court ${m.court ?? ""}: ${t1} vs ${t2}`);
+          }
+          lines.push("");
+        }
+        text = lines.join("\n").trimEnd();
+      } else {
+        setError("복사할 미리보기가 없습니다. 먼저 미리보기를 생성해 주세요.");
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch {
+      setError("클립보드 복사에 실패했습니다.");
+    }
+  };
+
+  useEffect(() => {
+    if (!imageCaptureData) return;
+    const timer = setTimeout(() => {
+      const el = imageCaptureRef.current;
+      if (!el) {
+        setImageCaptureData(null);
+        return;
+      }
+      html2canvas(el, { backgroundColor: "#ffffff", scale: 2 })
+        .then((canvas) => {
+          const a = document.createElement("a");
+          a.href = canvas.toDataURL("image/png");
+          a.download = `대진표_${getBracketTypeLabel(imageCaptureData.bracketType)}_${Date.now()}.png`;
+          a.click();
+        })
+        .finally(() => setImageCaptureData(null));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [imageCaptureData]);
+
+  const handleSubmit = async (e, step5ActionFromButton = null) => {
+    e?.preventDefault?.();
+    const step5Action =
+      step === 5
+        ? step5ActionFromButton ??
+          e?.nativeEvent?.submitter?.getAttribute?.("value") ??
+          e?.nativeEvent?.submitter?.value ??
+          null
+        : null;
+    const allowed = step === 5 ? canSaveAtStep5 : canSubmit;
+    if (!allowed || !bracketType || !matchType) return;
+
+    // 5단계에서 "이미지로 저장"은 서버 저장 없이 현재 미리보기로만 이미지 다운로드
+    if (step === 5 && step5Action === "image") {
+      setImageCaptureData({
+        matches: previewMatches ?? [],
+        participants: participants ?? [],
+        bracketType: bracketType ?? "group_stage",
+      });
+      return;
+    }
+
+    if (step === 5) setSavingAction(step5Action ?? null);
     setLoading(true);
     setError(null);
     try {
+      const rawParticipants =
+        bracketType === "group_stage" &&
+        matchType === "singles" &&
+        previewGroupStageTeamsForSubmit?.length > 0
+          ? previewGroupStageTeamsForSubmit.map((t) => {
+              const name = (t.player1 ?? "").trim();
+              const p = participants.find((p) => getParticipantName(p) === name);
+              return p !== undefined
+                ? typeof p === "string"
+                  ? p
+                  : { name: p.name, gender: p.gender }
+                : name;
+            })
+          : isTeamEntryDoubles
+            ? validTournamentTeams.flatMap((t) => [
+                (t.player1 ?? "").trim(),
+                (t.player2 ?? "").trim(),
+              ])
+            : participants;
+      const participantEntryValid = (x) => {
+        const n = typeof x === "string" ? x : x?.name;
+        return n != null && String(n).trim().length > 0;
+      };
+      const filteredRaw = rawParticipants.filter(participantEntryValid);
+      const filteredState = (Array.isArray(participants) ? participants : []).filter(participantEntryValid);
       const body = {
         match_type: matchType,
         bracket_type: bracketType,
-        participants:
-          bracketType === "group_stage" &&
-          matchType === "singles" &&
-          previewGroupStageTeamsForSubmit?.length > 0
-            ? previewGroupStageTeamsForSubmit.map((t) => {
-                const p = participants.find((p) => getParticipantName(p) === (t.player1 ?? "").trim());
-                return p !== undefined
-                  ? typeof p === "string"
-                    ? p
-                    : { name: p.name, gender: p.gender }
-                  : (t.player1 ?? "").trim();
-              })
-            : isTeamEntryDoubles
-              ? validTournamentTeams.flatMap((t) => [
-                  (t.player1 ?? "").trim(),
-                  (t.player2 ?? "").trim(),
-                ])
-              : participants,
+        participants: filteredRaw.length >= 2 ? filteredRaw : filteredState.length >= 2 ? filteredState : filteredRaw,
         seed_config: useSeed && SEED_AVAILABLE_TYPES.includes(bracketType) ? {} : null,
         participant_attendance:
           bracketType === "partner_rotation" ? participantAttendance : null,
@@ -1248,7 +1450,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
       if (bracketType === "tournament" || bracketType === "group_stage") {
         body.teams_per_group = teamsPerGroup;
       }
-      if (step === 5 && previewMatches && previewMatches.length > 0 && !hasPreviewDuplicate) {
+      if (step === 5 && previewMatches && previewMatches.length > 0) {
         body.override_matches = previewMatches.map((m) => ({
           round: m.round,
           court: m.court,
@@ -1261,9 +1463,13 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error ?? "생성에 실패했습니다.");
+        return;
+      }
+      if (step === 5 && step5Action === "link") {
+        router.push(`/bracket/${data.id}`);
         return;
       }
       router.push(`/bracket/${data.id}/edit?key=${data.edit_key}`);
@@ -1271,11 +1477,56 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
       setError(err instanceof Error ? err.message : "오류가 발생했습니다.");
     } finally {
       setLoading(false);
+      setSavingAction(null);
     }
   };
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
+      {imageCaptureData && (
+        <div
+          ref={imageCaptureRef}
+          className="fixed left-[-9999px] top-0 z-[9999] w-[960px] bg-white p-8"
+          aria-hidden
+        >
+          <h1 className="mb-4 text-xl font-bold text-gray-900">
+            {getBracketTypeLabel(imageCaptureData.bracketType)} 대진표
+          </h1>
+          {imageCaptureData.bracketType === "group_stage" &&
+          Array.isArray(previewGroupStageGroups) &&
+          previewGroupStageGroups.length > 0 ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-3">
+                {previewGroupStageGroups.map((group, gi) => (
+                  <div
+                    key={gi}
+                    className="flex h-40 flex-col rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+                  >
+                    <p className="border-b border-gray-100 pb-2 text-base font-bold text-gray-900">
+                      {gi + 1} 조
+                    </p>
+                    <ul className="mt-2 flex-1 space-y-1 text-sm text-gray-700 flex flex-col justify-center">
+                      {group.map((t, ti) => (
+                        <li key={ti}>
+                          {matchType === "doubles"
+                            ? [t.player1, t.player2].filter(Boolean).join(" / ")
+                            : (t.player1 || t.player2 || "").trim()}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <BracketGrid
+              matches={imageCaptureData.matches}
+              participants={imageCaptureData.participants}
+              bracketType={imageCaptureData.bracketType}
+            />
+          )}
+        </div>
+      )}
       <header className="sticky top-0 z-30 border-b border-gray-200 bg-white shadow-sm">
         <div className="relative mx-auto flex max-w-desktop items-center justify-between gap-4 px-4 py-4 sm:px-6">
           {step > 1 ? (
@@ -1496,10 +1747,14 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                                 };
                                 reader.readAsText(file, "UTF-8");
                               } else {
-                                parseTeamNamesFromExcel(file, (names) => {
-                                  if (names.length > 0) {
+                                parseTeamNamesFromExcel(file, (rows) => {
+                                  if (rows.length > 0) {
                                     setTournamentTeams(
-                                      names.map((name) => ({ player1: name, player2: "" }))
+                                      rows.map((row) => ({
+                                        player1: row.name,
+                                        player2: "",
+                                        clubs: row.clubs || [],
+                                      }))
                                     );
                                   }
                                   e.target.value = "";
@@ -2186,40 +2441,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                 </CardDescription>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                {bracketType === "partner_rotation" &&
-                  previewMatches &&
-                  previewMatches.length > 0 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={async () => {
-                        const rounds = [...new Set(previewMatches.map((m) => m.round))].sort((a, b) => a - b);
-                        const lines = [];
-                        for (const round of rounds) {
-                          const roundMatches = previewMatches.filter((m) => m.round === round);
-                          lines.push(`Round ${round}`);
-                          for (const m of roundMatches) {
-                            const t1 = (m.team1_players ?? []).filter(Boolean).join("-");
-                            const t2 = (m.team2_players ?? []).filter(Boolean).join("-");
-                            lines.push(`  Court ${m.court ?? ""}: ${t1} vs ${t2}`);
-                          }
-                          lines.push("");
-                        }
-                        const text = lines.join("\n").trimEnd();
-                        try {
-                          await navigator.clipboard.writeText(text);
-                          setCopySuccess(true);
-                          setTimeout(() => setCopySuccess(false), 2000);
-                        } catch {
-                          setError("클립보드 복사에 실패했습니다.");
-                        }
-                      }}
-                    >
-                      <Copy className="mr-2 h-4 w-4" />
-                      {copySuccess ? "복사 완료" : "복사"}
-                    </Button>
-                  )}
                 <Button
                   type="button"
                   variant="outline"
@@ -2290,7 +2511,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                         className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
                       >
                         <p className="mb-3 border-b border-gray-100 pb-2 text-base font-bold text-gray-900">
-                          조 {gi + 1}
+                          {gi + 1} 조 
                         </p>
                         <ul className="space-y-2 text-sm text-gray-700">
                           {group.map((t, ti) => (
@@ -2429,24 +2650,45 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   {error}
                 </div>
               )}
-              <div className="pt-4">
+              <div className="pt-4 flex flex-col gap-3">
                 <Button
                   type="submit"
+                  name="saveAction"
+                  value="image"
                   size="lg"
-                  disabled={!canSubmit || loading || (step === 5 && hasPreviewDuplicate)}
+                  disabled={!canSaveAtStep5 || loading}
                   className="w-full min-h-[48px]"
                 >
-                  {loading ? (
+                  {loading && savingAction === "image" ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                       저장 중...
                     </>
                   ) : (
                     <>
-                      <Save className="mr-2 h-5 w-5" />
-                      저장하고 대진표 보기
+                      <FileDown className="mr-2 h-5 w-5" />
+                      이미지로 저장
                     </>
                   )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  disabled={
+                    previewLoading ||
+                    (!previewMatches || previewMatches.length === 0) &&
+                      !(
+                        bracketType === "group_stage" &&
+                        Array.isArray(previewGroupStageGroups) &&
+                        previewGroupStageGroups.length > 0
+                      )
+                  }
+                  onClick={handleCopyPreviewText}
+                  className="w-full min-h-[48px]"
+                >
+                  <Copy className="mr-2 h-5 w-5" />
+                  {copySuccess ? "복사 완료" : "텍스트로 복사"}
                 </Button>
               </div>
             </CardContent>
