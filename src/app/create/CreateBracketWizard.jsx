@@ -13,7 +13,6 @@ import {
   BRACKET_TYPES_SINGLES,
   BRACKET_TYPES_DOUBLES,
   MATCH_TYPE_LABELS,
-  getBracketTypeLabel,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -37,8 +36,6 @@ import {
 } from "lucide-react";
 import { generateBracket } from "@/lib/bracket-logic";
 import * as XLSX from "xlsx";
-import html2canvas from "html2canvas";
-import { BracketGrid } from "@/app/bracket/[id]/BracketGrid";
 
 const TOTAL_STEPS = 5;
 const ALL_BRACKET_TYPES = [
@@ -351,6 +348,30 @@ function getParticipantName(p) {
   return normalizeParticipant(p).name;
 }
 
+/** 파트너 로테이션 복식: 남/녀 이름 요약 (개별·직접입력 공통) */
+function PartnerRotationGenderSummary({ participants }) {
+  const normalized = participants.map(normalizeParticipant).filter((p) => p.name);
+  if (normalized.length === 0) return null;
+  const maleNames = normalized.filter((p) => p.gender === "male").map((p) => p.name);
+  const femaleNames = normalized.filter((p) => p.gender === "female").map((p) => p.name);
+  return (
+    <div className="flex gap-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <div className="min-w-0 flex-1">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">남자</p>
+        <p className="text-sm text-gray-900">
+          {maleNames.length > 0 ? maleNames.join(", ") : "—"}
+        </p>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">여자</p>
+        <p className="text-sm text-gray-900">
+          {femaleNames.length > 0 ? femaleNames.join(", ") : "—"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function ParticipantInput({
   participants,
   onChange,
@@ -380,9 +401,6 @@ function ParticipantInput({
     );
     onChange(next);
   };
-
-  const maleNames = normalized.filter((p) => p.gender === "male").map((p) => p.name);
-  const femaleNames = normalized.filter((p) => p.gender === "female").map((p) => p.name);
 
   return (
     <div>
@@ -467,20 +485,7 @@ function ParticipantInput({
           </ul>
         )}
         {normalized.length > 0 && (
-          <div className="flex gap-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
-            <div className="min-w-0 flex-1">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">남자</p>
-              <p className="text-sm text-gray-900">
-                {maleNames.length > 0 ? maleNames.join(", ") : "—"}
-              </p>
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">여자</p>
-              <p className="text-sm text-gray-900">
-                {femaleNames.length > 0 ? femaleNames.join(", ") : "—"}
-              </p>
-            </div>
-          </div>
+          <PartnerRotationGenderSummary participants={participants} />
         )}
         {normalized.length < minCount && normalized.length > 0 && (
           <p className="text-sm text-destructive">
@@ -499,6 +504,44 @@ function parseTeamNamesFromPaste(text) {
     .split(/\s*,\s*|\n/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** 파트너 로테이션 복식 직접 입력: 줄 단위 `남 : 이름, …` / `여 : 이름, …` */
+function parsePartnerRotationGenderPaste(text) {
+  if (!text || typeof text !== "string") {
+    return { participants: [], maleCount: 0, femaleCount: 0 };
+  }
+  const seen = new Set();
+  const participants = [];
+  const maleLine = /^(남|남자)\s*[:：]\s*(.+)$/;
+  const femaleLine = /^(여|여자)\s*[:：]\s*(.+)$/;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let gender = null;
+    let rest = null;
+    const mm = line.match(maleLine);
+    const ff = line.match(femaleLine);
+    if (mm) {
+      gender = "male";
+      rest = mm[2];
+    } else if (ff) {
+      gender = "female";
+      rest = ff[2];
+    } else continue;
+    const names = rest
+      .split(/\s*[,，、]\s*|\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const name of names) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      participants.push({ name, gender });
+    }
+  }
+  const maleCount = participants.filter((p) => p.gender === "male").length;
+  const femaleCount = participants.filter((p) => p.gender === "female").length;
+  return { participants, maleCount, femaleCount };
 }
 
 /** Excel/CSV 파일에서 참가자(1) 및 클럽 정보 추출 (복식용). onSuccess([{ name, clubs }]) */
@@ -828,6 +871,9 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
   const [participantInputMode, setParticipantInputMode] = useState("manual");
   /** 예선 조편성 단식 "한 번에 입력"용 텍스트 */
   const [participantNamesPaste, setParticipantNamesPaste] = useState("");
+  /** 파트너 로테이션 복식: "manual" | "direct" */
+  const [partnerRotationInputMode, setPartnerRotationInputMode] = useState("manual");
+  const [partnerRotationDirectPaste, setPartnerRotationDirectPaste] = useState("");
   /** 토너먼트/예선 조편성: 조당 팀 수 (3 또는 4) */
   const [teamsPerGroup, setTeamsPerGroup] = useState(4);
   const [loading, setLoading] = useState(false);
@@ -839,10 +885,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
   /** 예선 조편성 제출 시 사용할 팀 순서(미리보기와 동일한 랜덤 순서) */
   const [previewGroupStageTeamsForSubmit, setPreviewGroupStageTeamsForSubmit] = useState(null);
   const [copySuccess, setCopySuccess] = useState(false);
-  const [imageCaptureData, setImageCaptureData] = useState(null);
-  const imageCaptureRef = useRef(null);
-  /** 5단계에서 어떤 저장 버튼을 눌렀는지 ('image' | 'link' | null) */
-  const [savingAction, setSavingAction] = useState(null);
 
   /** 미리보기에서 같은 매치 내 중복 참가자 있는지 (실제 이름만 검사, TBD/빈값 제외) */
   const hasPreviewDuplicate = useMemo(() => {
@@ -974,6 +1016,8 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
   const isTournamentDoubles = bracketType === "tournament" && matchType === "doubles";
   const isGroupStageDoubles = bracketType === "group_stage" && matchType === "doubles";
   const isGroupStageSingles = bracketType === "group_stage" && matchType === "singles";
+  const isPartnerRotationDoubles =
+    bracketType === "partner_rotation" && matchType === "doubles";
   const isTeamEntryDoubles = isTournamentDoubles || isGroupStageDoubles;
   const validTournamentTeams = tournamentTeams.filter((t) => {
     const p1 = (t.player1 ?? "").trim();
@@ -1344,26 +1388,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     }
   };
 
-  useEffect(() => {
-    if (!imageCaptureData) return;
-    const timer = setTimeout(() => {
-      const el = imageCaptureRef.current;
-      if (!el) {
-        setImageCaptureData(null);
-        return;
-      }
-      html2canvas(el, { backgroundColor: "#ffffff", scale: 2 })
-        .then((canvas) => {
-          const a = document.createElement("a");
-          a.href = canvas.toDataURL("image/png");
-          a.download = `대진표_${getBracketTypeLabel(imageCaptureData.bracketType)}_${Date.now()}.png`;
-          a.click();
-        })
-        .finally(() => setImageCaptureData(null));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [imageCaptureData]);
-
   const handleSubmit = async (e, step5ActionFromButton = null) => {
     e?.preventDefault?.();
     const step5Action =
@@ -1376,17 +1400,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     const allowed = step === 5 ? canSaveAtStep5 : canSubmit;
     if (!allowed || !bracketType || !matchType) return;
 
-    // 5단계에서 "이미지로 저장"은 서버 저장 없이 현재 미리보기로만 이미지 다운로드
-    if (step === 5 && step5Action === "image") {
-      setImageCaptureData({
-        matches: previewMatches ?? [],
-        participants: participants ?? [],
-        bracketType: bracketType ?? "group_stage",
-      });
-      return;
-    }
-
-    if (step === 5) setSavingAction(step5Action ?? null);
     setLoading(true);
     setError(null);
     try {
@@ -1477,56 +1490,11 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
       setError(err instanceof Error ? err.message : "오류가 발생했습니다.");
     } finally {
       setLoading(false);
-      setSavingAction(null);
     }
   };
 
   return (
     <div className="min-h-screen bg-[#F9FAFB]">
-      {imageCaptureData && (
-        <div
-          ref={imageCaptureRef}
-          className="fixed left-[-9999px] top-0 z-[9999] w-[960px] bg-white p-8"
-          aria-hidden
-        >
-          <h1 className="mb-4 text-xl font-bold text-gray-900">
-            {getBracketTypeLabel(imageCaptureData.bracketType)} 대진표
-          </h1>
-          {imageCaptureData.bracketType === "group_stage" &&
-          Array.isArray(previewGroupStageGroups) &&
-          previewGroupStageGroups.length > 0 ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                {previewGroupStageGroups.map((group, gi) => (
-                  <div
-                    key={gi}
-                    className="flex h-40 flex-col rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
-                  >
-                    <p className="border-b border-gray-100 pb-2 text-base font-bold text-gray-900">
-                      {gi + 1} 조
-                    </p>
-                    <ul className="mt-2 flex-1 space-y-1 text-sm text-gray-700 flex flex-col justify-center">
-                      {group.map((t, ti) => (
-                        <li key={ti}>
-                          {matchType === "doubles"
-                            ? [t.player1, t.player2].filter(Boolean).join(" / ")
-                            : (t.player1 || t.player2 || "").trim()}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <BracketGrid
-              matches={imageCaptureData.matches}
-              participants={imageCaptureData.participants}
-              bracketType={imageCaptureData.bracketType}
-            />
-          )}
-        </div>
-      )}
       <header className="sticky top-0 z-30 border-b border-gray-200 bg-white shadow-sm">
         <div className="relative mx-auto flex max-w-desktop items-center justify-between gap-4 px-4 py-4 sm:px-6">
           {step > 1 ? (
@@ -1779,6 +1747,35 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                 </>
               ) : (
                 <>
+                  {isPartnerRotationDoubles && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-gray-900">입력 방식</p>
+                      <div className="flex flex-wrap gap-2">
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="partnerRotationInputMode"
+                            value="manual"
+                            checked={partnerRotationInputMode === "manual"}
+                            onChange={() => setPartnerRotationInputMode("manual")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">개별 입력</span>
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 hover:bg-gray-50">
+                          <input
+                            type="radio"
+                            name="partnerRotationInputMode"
+                            value="direct"
+                            checked={partnerRotationInputMode === "direct"}
+                            onChange={() => setPartnerRotationInputMode("direct")}
+                            className="h-4 w-4 text-primary focus:ring-primary"
+                          />
+                          <span className="text-sm text-gray-900">한 번에 입력</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
                   {isGroupStageSingles && (
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-gray-900">입력 방식</p>
@@ -1819,7 +1816,8 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                       </div>
                     </div>
                   )}
-                  {(!isGroupStageSingles || participantInputMode === "manual") && (
+                  {(!isGroupStageSingles || participantInputMode === "manual") &&
+                    (!isPartnerRotationDoubles || partnerRotationInputMode === "manual") && (
                     <ParticipantInput
                       participants={participants}
                       onChange={handleParticipantsChange}
@@ -1831,6 +1829,38 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                           : undefined
                       }
                     />
+                  )}
+                  {isPartnerRotationDoubles && partnerRotationInputMode === "direct" && (
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        줄마다 <strong className="text-gray-800">남 :</strong> 또는{" "}
+                        <strong className="text-gray-800">여 :</strong>로 시작하고, 이름은 쉼표(,)로
+                        구분해 입력하세요. 남자·여자로 성별이 자동 설정됩니다.
+                      </p>
+                      <textarea
+                        value={partnerRotationDirectPaste}
+                        onChange={(e) => setPartnerRotationDirectPaste(e.target.value)}
+                        placeholder={
+                          "남 : 홍길동, 김철수, 박민수\n여 : 유관순, 신사임당, ..."
+                        }
+                        className="min-h-[140px] w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                        rows={6}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const { participants: parsed } =
+                            parsePartnerRotationGenderPaste(partnerRotationDirectPaste);
+                          if (parsed.length === 0) return;
+                          handleParticipantsChange(parsed);
+                        }}
+                      >
+                        목록 적용
+                      </Button>
+                      <PartnerRotationGenderSummary participants={participants} />
+                    </div>
                   )}
                   {isGroupStageSingles && participantInputMode === "paste" && (
                     <div className="space-y-2">
@@ -2273,7 +2303,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   )}
                 </>
               )}
-              {SEED_AVAILABLE_TYPES.includes(bracketType) && (
+              {/* {SEED_AVAILABLE_TYPES.includes(bracketType) && (
                 <label className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2">
                   <input
                     type="checkbox"
@@ -2285,7 +2315,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                     시드 배정 사용
                   </span>
                 </label>
-              )}
+              )} */}
             </CardContent>
           </Card>
         )}
@@ -2437,10 +2467,10 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
               <div>
                 <CardTitle>5. 미리보기</CardTitle>
                 <CardDescription>
-                  생성된 대진표를 확인하세요. 마음에 들지 않으면 이전으로 돌아가 수정하거나 새로고침으로 재생성할 수 있습니다.
+                  생성된 대진표를 확인하세요. 마음에 들지 않으면 이전으로 돌아가 수정할 수 있습니다.
                 </CardDescription>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -2460,7 +2490,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                     </>
                   )}
                 </Button>
-              </div>
+              </div> */}
             </CardHeader>
             <CardContent className="space-y-4">
               {bracketType === "partner_rotation" &&
@@ -2651,26 +2681,25 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                 </div>
               )}
               <div className="pt-4 flex flex-col gap-3">
-                <Button
-                  type="submit"
-                  name="saveAction"
-                  value="image"
+                {/* <Button
+                  type="button"
                   size="lg"
                   disabled={!canSaveAtStep5 || loading}
                   className="w-full min-h-[48px]"
+                  onClick={(e) => handleSubmit(e, "save")}
                 >
-                  {loading && savingAction === "image" ? (
+                  {loading ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                       저장 중...
                     </>
                   ) : (
                     <>
-                      <FileDown className="mr-2 h-5 w-5" />
-                      이미지로 저장
+                      <Save className="mr-2 h-5 w-5" />
+                      대진표 저장
                     </>
                   )}
-                </Button>
+                </Button> */}
                 <Button
                   type="button"
                   variant="outline"
