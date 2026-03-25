@@ -27,8 +27,6 @@ import {
   Info,
   X,
   ArrowLeft,
-  Save,
-  RefreshCw,
   LayoutGrid,
   Copy,
   Upload,
@@ -50,14 +48,6 @@ const ALL_BRACKET_TYPES = [
 const BRACKET_TYPES_READY = ["partner_rotation", "group_stage"];
 /** 복식에서 코트/시간 설정 노출 대상 (토너먼트·예선 조편성 복식 포함) */
 const DOUBLES_COURT_TYPES = ["partner_rotation", "group_matching", "team_doubles", "tournament", "group_stage"];
-/** 시드 배정 노출 대상 */
-const SEED_AVAILABLE_TYPES = [
-  "partner_rotation",
-  "group_matching",
-  "team_doubles",
-  "tournament",
-  "group_stage",
-];
 
 /** 상세 안내 문구 (카드 정보 아이콘 → 모달용) */
 const BRACKET_TYPE_GUIDE = {
@@ -501,7 +491,7 @@ function ParticipantInput({
 function parseTeamNamesFromPaste(text) {
   if (!text || typeof text !== "string") return [];
   return text
-    .split(/\s*,\s*|\n/)
+    .split(/[\s,，、]+/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -530,7 +520,7 @@ function parsePartnerRotationGenderPaste(text) {
       rest = ff[2];
     } else continue;
     const names = rest
-      .split(/\s*[,，、]\s*|\n/)
+      .split(/[\s,，、]+/)
       .map((s) => s.trim())
       .filter(Boolean);
     for (const name of names) {
@@ -848,7 +838,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
     onBracketInfoChange?.({ matchType, bracketType });
   }, [matchType, bracketType, onBracketInfoChange]);
   const [participants, setParticipants] = useState([]);
-  const [useSeed, setUseSeed] = useState(false);
   const [courtStartTime, setCourtStartTime] = useState("");
   const [courtEndTime, setCourtEndTime] = useState("");
   const [courtCount, setCourtCount] = useState(1);
@@ -1264,60 +1253,12 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
         const generated = generateBracket(
           bracketType,
           input,
-          useSeed && SEED_AVAILABLE_TYPES.includes(bracketType) ? {} : undefined,
+          undefined,
           getPreviewOptions()
         );
         setPreviewMatches(generated);
       } catch (err) {
         setError(err instanceof Error ? err.message : "대진 생성 오류");
-      } finally {
-        setPreviewLoading(false);
-      }
-    }, 0);
-  };
-
-  const handlePreviewRefresh = () => {
-    if (!canSubmit) return;
-    setError(null);
-    setPreviewLoading(true);
-    setPreviewGroupStageGroups(null);
-    if (bracketType !== "group_stage") setPreviewGroupStageTeamsForSubmit(null);
-    setTimeout(() => {
-      try {
-        let input;
-        if (bracketType === "group_stage") {
-          const raw =
-            matchType === "doubles"
-              ? validTournamentTeams.map((t) => ({
-                  player1: (t.player1 ?? "").trim(),
-                  player2: (t.player2 ?? "").trim(),
-                }))
-              : participants.map((p) => ({
-                  player1: (getParticipantName(p) ?? "").trim(),
-                  player2: "",
-                })).filter((t) => t.player1);
-          const shuffled = shuffleTeams(raw);
-          const groups = computeGroupStageGroups(shuffled, teamsPerGroup);
-          setPreviewGroupStageGroups(groups);
-          setPreviewGroupStageTeamsForSubmit(shuffled);
-          input = shuffled;
-        } else if (bracketType === "tournament") {
-          input = validTournamentTeams.map((t) => ({
-            player1: (t.player1 ?? "").trim(),
-            player2: (t.player2 ?? "").trim(),
-          }));
-        } else {
-          input = participants;
-        }
-        const generated = generateBracket(
-          bracketType,
-          input,
-          useSeed && SEED_AVAILABLE_TYPES.includes(bracketType) ? {} : undefined,
-          getPreviewOptions()
-        );
-        setPreviewMatches(generated);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "대진 재생성 오류");
       } finally {
         setPreviewLoading(false);
       }
@@ -1432,7 +1373,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
         match_type: matchType,
         bracket_type: bracketType,
         participants: filteredRaw.length >= 2 ? filteredRaw : filteredState.length >= 2 ? filteredState : filteredRaw,
-        seed_config: useSeed && SEED_AVAILABLE_TYPES.includes(bracketType) ? {} : null,
+        seed_config: null,
         participant_attendance:
           bracketType === "partner_rotation" ? participantAttendance : null,
         court_count:
@@ -1834,7 +1775,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                     <div className="space-y-2">
                       <p className="text-sm text-muted-foreground">
                         줄마다 <strong className="text-gray-800">남 :</strong> 또는{" "}
-                        <strong className="text-gray-800">여 :</strong>로 시작하고, 이름은 쉼표(,)로
+                        <strong className="text-gray-800">여 :</strong>로 시작하고, 이름은 쉼표(,)또는 공백( )으로
                         구분해 입력하세요. 남자·여자로 성별이 자동 설정됩니다.
                       </p>
                       <textarea
@@ -2303,19 +2244,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   )}
                 </>
               )}
-              {/* {SEED_AVAILABLE_TYPES.includes(bracketType) && (
-                <label className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-2">
-                  <input
-                    type="checkbox"
-                    checked={useSeed}
-                    onChange={(e) => setUseSeed(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-                  />
-                  <span className="text-sm font-medium text-gray-900">
-                    시드 배정 사용
-                  </span>
-                </label>
-              )} */}
             </CardContent>
           </Card>
         )}
@@ -2476,7 +2404,7 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                   variant="outline"
                   size="sm"
                   disabled={!canSubmit || previewLoading}
-                  onClick={handlePreviewRefresh}
+                  onClick={handlePreview}
                 >
                   {previewLoading ? (
                     <>
@@ -2485,7 +2413,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                     </>
                   ) : (
                     <>
-                      <RefreshCw className="mr-2 h-4 w-4" />
                       새로고침
                     </>
                   )}
@@ -2695,7 +2622,6 @@ export function CreateBracketWizard({ onBracketInfoChange }) {
                     </>
                   ) : (
                     <>
-                      <Save className="mr-2 h-5 w-5" />
                       대진표 저장
                     </>
                   )}
